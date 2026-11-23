@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Limit messages that go on with a sentence after the time zone, such as model-scoped limits ("You've hit your Fable limit · resets Nov 29 at 11am (Asia/Shanghai). Switch to another model …"), now get their reset time instead of an open-ended limit.
+
 ## 0.1.0
 
 First public release.
