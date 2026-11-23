@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A Claude Desktop usage sample without a 5-hour value no longer shows as 5h 0%: the 5-hour window stays unknown, or keeps the last status-line reading. Desktop often records only the weekly number.
+
 ## 0.1.0
 
 First public release.
