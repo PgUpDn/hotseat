@@ -169,7 +169,7 @@ Hotseat 是给确实合法拥有多个账号的人用的，比如工作号和个
 
 **不要用 Claude Desktop 里的 Log out 来换账号。** 那会在 Anthropic 那边让这个账号退出登录，它的配置得重新登录。请用 Hotseat 切换。
 
-**支持 Windows 或 Linux 吗？** 暂时不支持，Hotseat 只支持 macOS。
+**支持 Windows 或 Linux 吗？** Linux：命令行工具可以用，包括切换 Linux 版 Claude Desktop（数据在 `~/.config/Claude`）。用 `go build -o ~/.local/bin/hotseat ./cmd/hotseat` 编译，然后运行 `hotseat init`、`hotseat shim install`（没有 `~/.zshrc` 时写入 `~/.bashrc`）、`hotseat statusline install`、`hotseat hook install` 和 `hotseat desktop adopt`。撞到限额时用 zenity 弹窗询问。Linux 上暂时没有菜单栏 App。Windows：暂不支持。
 
 **App 读不到我的 `HOTSEAT_HOME`。** App 不会继承你在 shell 里设置的变量。如果你用了它，就让 App 指向一个包装脚本：`defaults write io.github.zahT3.hotseat hotseatPath /path/to/script`。
 

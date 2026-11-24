@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Linux: the CLI runs on Linux, including Claude Desktop for Linux. It finds Desktop through /proc, quits it with SIGTERM, starts it with `systemd-run --user gtk-launch`, keeps the shim and aliases in `~/.bashrc` when there is no `~/.zshrc`, and asks the limit handoff question with zenity. A Desktop that hangs after quitting with only its own processes left is ended after 17 s; one with a Code session left is never killed.
+
 ## 0.1.1
 
 - Limit messages that go on with a sentence after the time zone, such as model-scoped limits ("You've hit your Fable limit · resets Nov 29 at 11am (Asia/Shanghai). Switch to another model …"), now get their reset time instead of an open-ended limit.

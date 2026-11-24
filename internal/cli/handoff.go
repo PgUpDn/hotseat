@@ -13,7 +13,7 @@ import (
 	"github.com/zahT3/hotseat/internal/paths"
 )
 
-var handoffRunner handoff.Runner = handoff.OSA{}
+var handoffRunner = handoff.Default()
 
 // cmdHandoff runs detached from Claude Code (started by the StopFailure
 // hook), so errors go to <state>/handoff.log instead of a terminal.
