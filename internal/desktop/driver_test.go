@@ -82,3 +82,38 @@ func TestQuitAndWaitSucceeds(t *testing.T) {
 		t.Errorf("already quit: err %v quits %d", err, idle.quits)
 	}
 }
+
+// stuckDriver is a Desktop that finished quitting but never exits, like
+// Claude Desktop for Linux spinning on a dead GPU process.
+type stuckDriver struct {
+	fakeDriver
+	allow bool // whether KillStuck agrees (false: a session is left)
+	kills int
+}
+
+func (s *stuckDriver) KillStuck(left []desktop.Proc) bool {
+	s.kills++
+	if s.allow {
+		s.procs = nil
+	}
+	return s.allow
+}
+
+func TestQuitAndWaitEndsAStuckApp(t *testing.T) {
+	desktop.SetStuckAfter(t, 100*time.Millisecond)
+	d := &stuckDriver{fakeDriver: fakeDriver{procs: claudeApp}, allow: true}
+	if err := desktop.QuitAndWait(d, home, 3*time.Second); err != nil || d.quits != 1 || d.kills != 1 {
+		t.Errorf("err %v quits %d kills %d", err, d.quits, d.kills)
+	}
+}
+
+// When the driver refuses (a Code session is still running), nothing is
+// killed and the quit times out as before; it is asked only once.
+func TestQuitAndWaitStuckButRefused(t *testing.T) {
+	desktop.SetStuckAfter(t, 100*time.Millisecond)
+	d := &stuckDriver{fakeDriver: fakeDriver{procs: claudeApp}}
+	err := desktop.QuitAndWait(d, home, 700*time.Millisecond)
+	if !errors.Is(err, desktop.ErrStillRunning) || d.kills != 1 {
+		t.Errorf("err %v kills %d", err, d.kills)
+	}
+}
