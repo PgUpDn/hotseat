@@ -131,8 +131,11 @@ func ContextTokens(path string) int {
 
 var (
 	// "resets <when> [(<zone>)]", ending at " · ", a newline or the end, so
-	// suffixes such as " · progress saved" do not break it.
-	resetRe = regexp.MustCompile(`(?i)resets\s+(?:at\s+)?([^·()\n]+?)\s*(?:\(([^)]+)\))?\s*(?:·|\n|$)`)
+	// suffixes such as " · progress saved" do not break it. After a zone a
+	// period ends it too: model-scoped limits go on with a sentence
+	// ("(Asia/Shanghai). Switch to another model ..."). Without a zone a
+	// period does not, so "Nov. 29" stays whole.
+	resetRe = regexp.MustCompile(`(?i)resets\s+(?:at\s+)?([^·()\n]+?)(?:\s*\(([^)]+)\)\s*(?:·|\.|\n|$)|\s*(?:·|\n|$))`)
 	dateRe  = regexp.MustCompile(`(?i)^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:,|\s+at)?\s+(.+)$`)
 	clockRe = regexp.MustCompile(`(?i)^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$`)
 )
