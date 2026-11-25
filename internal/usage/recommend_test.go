@@ -83,3 +83,21 @@ func TestLimitClearedByLaterObservation(t *testing.T) {
 		}
 	}
 }
+
+// For a handoff away from a model limit, an account limited on the same
+// model is no help.
+func TestRecommendSkipsAccountsLimitedOnTheModel(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	reg := account.Registry{Accounts: []account.Account{{Name: "a"}, {Name: "b"}, {Name: "c"}}}
+	fable := &usage.LimitHit{Model: "Fable", ResetsAt: now.Unix() + 3600, ObservedAt: now.Unix()}
+	records := map[string]usage.Record{
+		"b": {ModelLimit: fable, SevenDay: &usage.Window{UsedPercent: 10, ObservedAt: now.Unix()}},
+		"c": {SevenDay: &usage.Window{UsedPercent: 60, ObservedAt: now.Unix()}},
+	}
+	if got, _ := usage.RecommendFor(reg, records, "a", "Fable", now); got != "c" {
+		t.Errorf("for Fable: got %q, want c", got)
+	}
+	if got, _ := usage.Recommend(reg, records, "a", now); got != "b" {
+		t.Errorf("account-wide: got %q, want b", got)
+	}
+}

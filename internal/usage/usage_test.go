@@ -128,3 +128,32 @@ func TestConcurrentObserveKeepsLimit(t *testing.T) {
 		}
 	}
 }
+
+// A limit on one model does not block the account: other models still
+// work. It is tracked on its own and ends at its reset time.
+func TestModelLimitDoesNotBlockTheAccount(t *testing.T) {
+	p := testutil.FakeHome(t)
+	now := time.Unix(1_000_000, 0)
+	hit := usage.LimitHit{Message: "You've hit your Fable limit", Model: "Fable", ResetsAt: now.Unix() + 3600, ObservedAt: now.Unix()}
+	if err := usage.SetLimit(p, "work", hit); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := usage.Load(p, "work")
+	if r.Limit != nil || r.ModelLimit == nil || r.ModelLimit.Model != "Fable" {
+		t.Fatalf("record %+v", r)
+	}
+	if r.LimitActive(now) {
+		t.Error("a model limit must not mark the whole account limited")
+	}
+	if !r.ModelLimited("Fable", now) || !r.ModelLimited("fable", now) || r.ModelLimited("Opus", now) {
+		t.Error("ModelLimited: Fable yes (any case), Opus no")
+	}
+	if r.ModelLimited("Fable", now.Add(2*time.Hour)) {
+		t.Error("still limited after the reset time")
+	}
+	// An account-wide limit afterwards keeps the model limit.
+	_ = usage.SetLimit(p, "work", usage.LimitHit{Message: "weekly", ResetsAt: now.Unix() + 60, ObservedAt: now.Unix()})
+	if r, _ = usage.Load(p, "work"); r.Limit == nil || r.ModelLimit == nil || !r.LimitActive(now) {
+		t.Errorf("after account limit: %+v", r)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,5 +137,33 @@ func TestStopFailureRecommendUsesDesktop(t *testing.T) {
 	_, _, args, _ := stopFailure(t, in)
 	if flag(args, "--to") != "claude" {
 		t.Errorf("--to = %q, want claude (claude3 is at 95%% per Desktop)", flag(args, "--to"))
+	}
+}
+
+const fableLimitText = "You've hit your Fable limit · resets Nov 1 at 6pm (Asia/Shanghai). Switch to another model, or manage usage credits at https://claude.ai/settings/usage, to continue."
+
+// A limit on one model is recorded as that, not as an account-wide limit,
+// and `hotseat usage` shows it on the account's row without LIMIT.
+func TestStopFailureRecordsModelScopedLimit(t *testing.T) {
+	p := statusSetup(t)
+	in := fmt.Sprintf(`{"session_id":"sess-1","transcript_path":"/nonexistent","cwd":"/tmp/x","last_assistant_message":%q}`, fableLimitText)
+	code, _, args, called := stopFailure(t, in)
+	if code != 0 || !called || flag(args, "--to") != "claude" {
+		t.Fatalf("exit %d called %v args %v", code, called, args)
+	}
+	r, _ := usage.Load(p, "claude2")
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	if r.Limit != nil || r.ModelLimit == nil || r.ModelLimit.Model != "Fable" ||
+		r.ModelLimit.ResetsAt != time.Date(2026, 11, 1, 18, 0, 0, 0, loc).Unix() {
+		t.Fatalf("limit %+v model limit %+v", r.Limit, r.ModelLimit)
+	}
+	defer cli.SetClock(func() time.Time { return time.Date(2026, 10, 29, 13, 0, 0, 0, loc) })()
+	_, out, _ := run(t, "usage")
+	if !strings.Contains(out, "Fable limit until") || strings.Contains(out, "LIMIT") {
+		t.Errorf("usage output %q", out)
+	}
+	_, js, _ := run(t, "panel", "--json")
+	if !strings.Contains(js, `"modelLimitActive": true`) || !strings.Contains(js, `"limitActive": false`) {
+		t.Errorf("panel %s", js)
 	}
 }

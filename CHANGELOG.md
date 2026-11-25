@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A limit on one model ("You've hit your Fable limit …") is recorded as a limit on that model, not on the account: the account is no longer shown as LIMIT or skipped as a handoff target while its other models still work. `hotseat usage` and the account's card show "Fable limit until …", and a handoff away from a model limit skips accounts limited on the same model.
+
 ## 0.1.1
 
 - Limit messages that go on with a sentence after the time zone, such as model-scoped limits ("You've hit your Fable limit · resets Nov 29 at 11am (Asia/Shanghai). Switch to another model …"), now get their reset time instead of an open-ended limit.
