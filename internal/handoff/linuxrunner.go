@@ -78,7 +78,9 @@ func ZenityAnswer(code int, out string, buttons []string, def string) (string, e
 
 func (Linux) Dialog(text string, buttons []string, def string) (string, error) {
 	cmd := exec.Command("zenity", ZenityArgs(text, buttons, def)...)
-	cmd.Env = guiEnv()
+	// ZENITY_OK, ZENITY_CANCEL, ... remap zenity's exit codes; without them
+	// "Not now" can never read as OK.
+	cmd.Env = WithoutPrefix(guiEnv(), "ZENITY_")
 	out, err := cmd.Output()
 	var exitErr *exec.ExitError
 	switch {
@@ -111,8 +113,31 @@ func (Linux) OpenTerminal(command string) error {
 	} else {
 		cmd = exec.Command("x-terminal-emulator", "-e", "bash", "-lc", line)
 	}
-	cmd.Env = guiEnv()
+	cmd.Env = TerminalEnv(guiEnv())
 	return cmd.Run()
+}
+
+// TerminalEnv is env for the terminal that resumes the session as another
+// account. This process is a hook of the old account's session, and a
+// terminal started directly (x-terminal-emulator) hands its environment to
+// the new one: nothing of Claude Code's or Anthropic's may travel that way,
+// least of all a token. The resume line sets CLAUDE_CONFIG_DIR itself.
+func TerminalEnv(env []string) []string {
+	for _, prefix := range []string{"CLAUDE", "ANTHROPIC_"} {
+		env = WithoutPrefix(env, prefix)
+	}
+	return env
+}
+
+// WithoutPrefix is env without the variables whose name starts with prefix.
+func WithoutPrefix(env []string, prefix string) []string {
+	var out []string
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, prefix) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // guiVars are what a program needs to reach the graphical session.
@@ -134,7 +159,9 @@ func guiEnv() []string {
 }
 
 // MergeGUIEnv adds the session variables found in `systemctl --user
-// show-environment` output to env, without overriding what env has.
+// show-environment` output to env, without overriding what env has. That
+// output is shell-escaped: a value with a space or a quote comes as
+// $'...'. Such a value is unescaped; one that cannot be is left out.
 func MergeGUIEnv(env []string, shown string) []string {
 	have := map[string]bool{}
 	for _, kv := range env {
@@ -143,16 +170,69 @@ func MergeGUIEnv(env []string, shown string) []string {
 	}
 	sc := bufio.NewScanner(strings.NewReader(shown))
 	for sc.Scan() {
-		k, _, ok := strings.Cut(sc.Text(), "=")
+		k, v, ok := strings.Cut(sc.Text(), "=")
 		if !ok || have[k] {
 			continue
 		}
-		for _, v := range guiVars {
-			if k == v {
-				env = append(env, sc.Text())
+		for _, name := range guiVars {
+			if k != name {
+				continue
+			}
+			if v, ok = unescapeShown(v); ok {
+				env = append(env, k+"="+v)
 				have[k] = true
 			}
 		}
 	}
 	return env
+}
+
+// unescapeShown undoes systemd's escaping of one value: plain text as it
+// is, or $'...' with backslash escapes.
+func unescapeShown(v string) (string, bool) {
+	if !strings.HasPrefix(v, "$'") {
+		return v, !strings.ContainsAny(v, `'"\`)
+	}
+	if len(v) < 3 || !strings.HasSuffix(v, "'") {
+		return "", false
+	}
+	body := v[2 : len(v)-1]
+	var b strings.Builder
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		if c == '\'' {
+			return "", false // an unescaped quote: not one $'...' word
+		}
+		if c != '\\' {
+			b.WriteByte(c)
+			continue
+		}
+		i++
+		if i == len(body) {
+			return "", false
+		}
+		switch body[i] {
+		case '\\', '\'', '"':
+			b.WriteByte(body[i])
+		case 'n':
+			b.WriteByte('\n')
+		case 't':
+			b.WriteByte('\t')
+		case 'r':
+			b.WriteByte('\r')
+		case 'x':
+			if i+2 >= len(body) {
+				return "", false
+			}
+			n, err := strconv.ParseUint(body[i+1:i+3], 16, 8)
+			if err != nil {
+				return "", false
+			}
+			b.WriteByte(byte(n))
+			i += 2
+		default:
+			return "", false
+		}
+	}
+	return b.String(), true
 }

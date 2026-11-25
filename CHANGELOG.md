@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Linux: the CLI runs on Linux, including Claude Desktop for Linux. It finds Desktop through /proc, quits it with SIGTERM, starts it with `systemd-run --user gtk-launch`, keeps the shim and aliases in `~/.bashrc` when there is no `~/.zshrc`, and asks the limit handoff question with zenity. A Desktop that hangs after quitting with only its own processes left is ended after 17 s; one with a Code session left is never killed.
+- Linux: the CLI runs on Linux, including Claude Desktop for Linux. It finds Desktop through /proc, quits it with SIGTERM (never a force-kill: a Desktop that does not exit in time is reported with its PIDs), and starts it with `systemd-run --user gtk-launch`, which needs a systemd user session. Desktop's data is looked for under `XDG_CONFIG_HOME` when set. The shim and aliases go to `~/.bashrc`, or `~/.zshrc` when zsh is the login shell, and the limit handoff asks with zenity.
+- `hotseat desktop switch --resume` refuses a session ID that is not a UUID before anything is quit or moved.
+- When a Desktop switch succeeds but Desktop cannot be reopened, Hotseat says so instead of reporting a plain failure or success.
 
 ## 0.1.1
 

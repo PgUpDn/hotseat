@@ -72,3 +72,29 @@ func TestDefaultRunnerPerPlatform(t *testing.T) {
 		t.Error("darwin: not OSA")
 	}
 }
+
+// show-environment shell-escapes values: $'...' is unescaped, so a path
+// with a space carries no quote characters; a value that cannot be read
+// back is left out rather than passed on wrong.
+func TestMergeGUIEnvUnescapes(t *testing.T) {
+	shown := "XAUTHORITY=$'/run/user/1001/my dir/X\\'auth'\nDISPLAY=:1\nWAYLAND_DISPLAY=$'broken\n"
+	got := handoff.MergeGUIEnv(nil, shown)
+	want := []string{"XAUTHORITY=/run/user/1001/my dir/X'auth", "DISPLAY=:1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q", got)
+	}
+}
+
+// The handoff runs as a hook of the old account's session. Nothing of
+// Claude Code's or Anthropic's goes on to the terminal of the new one, and
+// zenity's exit codes cannot be remapped from the environment.
+func TestTerminalEnvDropsClaudeVariables(t *testing.T) {
+	env := []string{"HOME=/home/u", "CLAUDE_CONFIG_DIR=/home/u/.claude-old", "CLAUDECODE=1",
+		"CLAUDE_CODE_OAUTH_TOKEN=secret", "ANTHROPIC_API_KEY=secret", "DISPLAY=:0", "ZENITY_OK=1"}
+	if got, want := handoff.TerminalEnv(env), []string{"HOME=/home/u", "DISPLAY=:0", "ZENITY_OK=1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("terminal env %q", got)
+	}
+	if got, want := handoff.WithoutPrefix(env, "ZENITY_"), env[:6]; !reflect.DeepEqual(got, want) {
+		t.Errorf("zenity env %q", got)
+	}
+}
