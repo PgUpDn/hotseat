@@ -41,6 +41,9 @@ public struct AccountInfo: Decodable, Identifiable, Sendable {
     public var sevenDay: UsageWindow?
     public var limit: LimitHit?
     public var limitActive: Bool
+    /// A limit on one model only; the account itself is not limited.
+    public var modelLimit: LimitHit?
+    public var modelLimitActive: Bool?
     public var error: String?
     public var desktop: String
     public var desktopProblem: String?
@@ -70,6 +73,12 @@ public struct AccountInfo: Decodable, Identifiable, Sendable {
         guard limitActive else { return false }
         guard let resets = limit?.resetsAt, resets > 0 else { return true }
         return Double(resets) > now.timeIntervalSince1970
+    }
+
+    /// Whether the limit on one model still holds now.
+    public func isModelLimited(now: Date) -> Bool {
+        guard modelLimitActive == true, let l = modelLimit else { return false }
+        return l.resetsAt <= 0 || Double(l.resetsAt) > now.timeIntervalSince1970
     }
 
     /// When the newer of the two usage windows was observed.
@@ -114,10 +123,13 @@ public struct LimitHit: Decodable, Sendable {
     public var message: String
     public var resetsAt: Int64
     public var observedAt: Int64
+    /// The model the limit is on ("Fable"); nil for an account-wide limit.
+    public var model: String?
 
-    public init(message: String, resetsAt: Int64, observedAt: Int64) {
+    public init(message: String, resetsAt: Int64, observedAt: Int64, model: String? = nil) {
         self.message = message
         self.resetsAt = resetsAt
         self.observedAt = observedAt
+        self.model = model
     }
 }

@@ -87,7 +87,10 @@ func cmdStopFailure(p paths.Paths, stdout, stderr io.Writer) int {
 		resets = t.Unix()
 	}
 
-	_ = usage.SetLimit(p, from.Name, usage.LimitHit{Message: msg, ResetsAt: resets, ObservedAt: now.Unix(), SessionID: in.SessionID, Cwd: in.Cwd})
+	// A limit on one model ("You've hit your Fable limit") is recorded as
+	// that: the account is not limited, its other models still work.
+	model := transcript.LimitModel(msg)
+	_ = usage.SetLimit(p, from.Name, usage.LimitHit{Message: msg, ResetsAt: resets, ObservedAt: now.Unix(), SessionID: in.SessionID, Cwd: in.Cwd, Model: model})
 
 	records, _ := loadRecords(p, reg)
 	candidates := reg
@@ -95,7 +98,7 @@ func cmdStopFailure(p paths.Paths, stdout, stderr io.Writer) int {
 		// Desktop can only switch to accounts that have Desktop data.
 		candidates = desktopAccounts(p, reg)
 	}
-	to, _ := usage.Recommend(candidates, records, from.Name, now)
+	to, _ := usage.RecommendFor(candidates, records, from.Name, model, now)
 	args := []string{
 		"--from", from.Name, "--to", to, "--session", in.SessionID, "--cwd", in.Cwd,
 		"--tokens", strconv.Itoa(transcript.ContextTokens(in.TranscriptPath)),

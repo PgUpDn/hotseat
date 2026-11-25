@@ -114,3 +114,26 @@ private func window(_ pct: Double, resets: String?, reset: Bool = false) -> Usag
     let later = Date(timeIntervalSince1970: 1793345500)  // after claude3's 5h reset
     #expect(Format.title(s, failed: false, now: later) == "0%")
 }
+
+// A limit on one model shows on the card by name and does not turn the
+// menu bar title into LIMIT.
+@Test func modelLimitText() throws {
+    let hit = LimitHit(message: "", resetsAt: ts("2026-10-30 15:30"), observedAt: 0, model: "Fable")
+    #expect(Format.modelLimit(hit, now: now, calendar: shanghai) == "Fable limit · resets in 5h 30m")
+    #expect(Format.modelLimit(LimitHit(message: "", resetsAt: ts("2026-11-01 18:00"), observedAt: 0, model: "Fable"), now: now, calendar: shanghai) == "Fable limit until Sun 18:00")
+    #expect(Format.modelLimit(LimitHit(message: "", resetsAt: 0, observedAt: 0, model: "Opus"), now: now, calendar: shanghai) == "Opus limit reached")
+
+    let json = """
+    {"generatedAt": 1, "current": "work", "desktop": {"managed": false, "running": false, "runningKnown": true, "pendingRecovery": false},
+     "accounts": [{"account": "work", "current": true, "fiveHour": null, "sevenDay": null, "limit": null, "limitActive": false,
+       "modelLimit": {"message": "You've hit your Fable limit", "resetsAt": 2000, "observedAt": 1000, "model": "Fable"},
+       "modelLimitActive": true, "desktop": "none"}]}
+    """
+    let s = try Snapshot.decode(Data(json.utf8))
+    let a = s.accounts[0]
+    #expect(a.modelLimit?.model == "Fable")
+    #expect(a.isModelLimited(now: Date(timeIntervalSince1970: 1500)))
+    #expect(!a.isModelLimited(now: Date(timeIntervalSince1970: 2500)))
+    #expect(!a.isLimited(now: Date(timeIntervalSince1970: 1500)))
+    #expect(Format.title(s, failed: false, now: Date(timeIntervalSince1970: 1500)) == "")
+}

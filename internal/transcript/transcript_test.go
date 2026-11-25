@@ -184,3 +184,25 @@ func TestParseResetSentenceAfterZone(t *testing.T) {
 		t.Errorf("abbreviated month: got %v %v, want %v", got, ok, want)
 	}
 }
+
+// A limit on one model names it: "You've hit your Fable limit". The
+// plan-wide ones (session, weekly, ...) do not count as a model.
+func TestLimitModel(t *testing.T) {
+	cases := map[string]string{
+		"You've hit your Fable limit · resets Nov 29 at 11am (Asia/Shanghai). Switch to another model, or manage usage credits at https://claude.ai/settings/usage, to continue.": "Fable",
+		"You've hit your Opus limit · resets 6pm":                             "Opus",
+		"You’ve hit your Sonnet 5 limit · resets 6pm":                         "Sonnet 5",
+		"You've hit your weekly limit · resets Nov 1 at 6pm (Asia/Shanghai)":  "",
+		"You've hit your session limit · resets 3pm":                          "",
+		"You've hit your usage limit · resets 3pm":                            "",
+		"You've hit your 5-hour limit · resets 3pm":                           "",
+		"You've hit your limit · resets 3pm":                                  "",
+		"limit reached · resets 9:30pm (Asia/Shanghai)":                       "",
+		"You've hit your weekly limit. Fable limit also applies · resets 3pm": "",
+	}
+	for msg, want := range cases {
+		if got := transcript.LimitModel(msg); got != want {
+			t.Errorf("%q: got %q, want %q", msg, got, want)
+		}
+	}
+}

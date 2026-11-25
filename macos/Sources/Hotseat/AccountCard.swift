@@ -51,6 +51,10 @@ struct AccountCard: View {
                 if info.isLimited(now: now) {
                     warning(Format.limit(info.limit, now: now), symbol: "exclamationmark.octagon.fill", color: .red)
                 }
+                if let l = info.modelLimit, info.isModelLimited(now: now) {
+                    // Orange, not red: the account's other models still work.
+                    warning(Format.modelLimit(l, now: now), symbol: "exclamationmark.triangle.fill", color: .orange)
+                }
                 if let problem = info.desktopProblem, !problem.isEmpty {
                     warning("Desktop: " + problem, symbol: "exclamationmark.triangle.fill", color: .orange)
                 }
