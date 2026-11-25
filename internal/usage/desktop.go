@@ -10,9 +10,9 @@ import (
 // Sample is Claude Desktop's latest usage reading for one organization.
 // Desktop records percentages only, no reset times.
 type Sample struct {
-	T        int64 // Unix seconds
-	FiveHour float64
-	SevenDay float64
+	T        int64    // Unix seconds
+	FiveHour *float64 // nil when Desktop did not record it
+	SevenDay *float64
 }
 
 // ReadDesktopSamples reads Desktop's plan-usage-history.json and keeps the
@@ -31,8 +31,8 @@ func ReadDesktopSamples(file string) (map[string]Sample, error) {
 			T   int64  `json:"t"`
 			Org string `json:"org"`
 			U   struct {
-				FH float64 `json:"fh"`
-				SD float64 `json:"sd"`
+				FH *float64 `json:"fh"`
+				SD *float64 `json:"sd"`
 			} `json:"u"`
 		} `json:"samples"`
 	}
@@ -54,11 +54,13 @@ func MergeDesktop(r Record, s *Sample) Record {
 	if s == nil {
 		return r
 	}
-	merge := func(w *Window, pct float64) *Window {
-		if w != nil && s.T <= w.ObservedAt {
+	// A window Desktop did not record stays as it was: Desktop often
+	// writes only the weekly number, and a missing one is not 0%.
+	merge := func(w *Window, pct *float64) *Window {
+		if pct == nil || (w != nil && s.T <= w.ObservedAt) {
 			return w
 		}
-		nw := &Window{UsedPercent: pct, ObservedAt: s.T, Source: "desktop"}
+		nw := &Window{UsedPercent: *pct, ObservedAt: s.T, Source: "desktop"}
 		if w != nil && w.ResetsAt > s.T {
 			nw.ResetsAt = w.ResetsAt
 		}
