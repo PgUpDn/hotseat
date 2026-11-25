@@ -15,6 +15,7 @@ import (
 	"github.com/zahT3/hotseat/internal/desktop"
 	"github.com/zahT3/hotseat/internal/paths"
 	"github.com/zahT3/hotseat/internal/shellq"
+	"github.com/zahT3/hotseat/internal/transcript"
 )
 
 type Request struct {
@@ -39,12 +40,19 @@ func Offer(p paths.Paths, reg account.Registry, r Request, run Runner) error {
 	if r.ResetsAt > 0 {
 		resets = time.Unix(r.ResetsAt, 0).Local().Format("Jan 2 15:04")
 	}
+	// A limit on one model is named ("Fable limit", "Fable quota"), as on
+	// the account's card: "usage limit" reads as if the whole account were
+	// blocked.
+	limit, quota := "usage limit", "quota"
+	if model := transcript.LimitModel(r.Message); model != "" {
+		limit, quota = model+" limit", model+" quota"
+	}
 	if r.To == "" {
-		msg := "Resets " + resets + ". No other account has quota left."
+		msg := "Resets " + resets + ". No other account has " + quota + " left."
 		if r.Desktop {
-			msg = "Resets " + resets + ". No other account with Claude Desktop data has quota left; add one with: hotseat desktop add <account>"
+			msg = "Resets " + resets + ". No other account with Claude Desktop data has " + quota + " left; add one with: hotseat desktop add <account>"
 		}
-		return run.Notify(r.From+" hit its usage limit", msg)
+		return run.Notify(r.From+" hit its "+limit, msg)
 	}
 	to, ok := reg.Find(r.To)
 	if !ok {
@@ -60,8 +68,8 @@ func Offer(p paths.Paths, reg account.Registry, r Request, run Runner) error {
 		cont = "Switch Desktop to " + r.To
 		how = "Claude Desktop will quit and reopen as " + r.To + " on this session."
 	}
-	text := fmt.Sprintf("%s hit its usage limit in %s (resets %s).\n\nContinue this session as %s?\n\nContext is about %dk tokens; the first message on %s reads it again without cache.\n\n%s",
-		r.From, project, resets, r.To, (r.Tokens+500)/1000, r.To, how)
+	text := fmt.Sprintf("%s hit its %s in %s (resets %s).\n\nContinue this session as %s?\n\nContext is about %dk tokens; the first message on %s reads it again without cache.\n\n%s",
+		r.From, limit, project, resets, r.To, (r.Tokens+500)/1000, r.To, how)
 	pressed, err := run.Dialog(text, []string{"Not now", cont}, cont)
 	if err != nil || pressed != cont {
 		return err
