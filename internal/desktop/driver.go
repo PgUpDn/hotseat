@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/zahT3/hotseat/internal/paths"
 )
 
 const bundleID = "com.anthropic.claudefordesktop"
@@ -30,14 +32,35 @@ type Driver interface {
 var ErrStillRunning = errors.New("Claude Desktop is still running")
 var ErrRestartRequired = errors.New("switching requires restarting Claude Desktop")
 
+// linuxAppDirs are where the Linux packages of Claude Desktop install the
+// Electron app (deb/rpm, and tarball or AppImage-style installs).
+var linuxAppDirs = []string{"/usr/lib/claude-desktop/", "/opt/Claude/", "/opt/claude-desktop/"}
+
+// inApp reports whether exe belongs to the Claude Desktop app itself.
+func inApp(exe string) bool {
+	if paths.GOOS == "linux" {
+		if strings.HasSuffix(exe, "/chrome-native-host") {
+			return false
+		}
+		for _, dir := range linuxAppDirs {
+			if strings.HasPrefix(exe, dir) {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.Contains(exe, "/Claude.app/Contents/") && !strings.HasSuffix(exe, "/Helpers/chrome-native-host")
+}
+
 // Running filters the processes that may touch Desktop's data dir: anything
-// from a Claude.app bundle (wherever an update put it) except the Chrome
-// extension's native host, and anything run from the data dir itself.
+// from the Claude Desktop app (on macOS any Claude.app bundle, wherever an
+// update put it) except the Chrome extension's native host, and anything
+// run from the data dir itself.
 func Running(procs []Proc, home string) []Proc {
-	dataDir := home + "/Library/Application Support/Claude/"
+	dataDir := paths.Paths{Home: home}.DesktopDataDir() + "/"
 	var out []Proc
 	for _, p := range procs {
-		inBundle := strings.Contains(p.Exe, "/Claude.app/Contents/") && !strings.HasSuffix(p.Exe, "/Helpers/chrome-native-host")
+		inBundle := inApp(p.Exe)
 		inData := strings.HasPrefix(p.Exe, dataDir)
 		// Claude Code rewrites its process title, so its real executable
 		// and working directory come from lsof.

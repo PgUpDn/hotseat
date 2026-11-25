@@ -8,3 +8,5 @@ func SetBeforeSwapStep(t *testing.T, fn func(step string) error) {
 	beforeSwapStep = fn
 	t.Cleanup(func() { beforeSwapStep = old })
 }
+
+func (d LinuxDriver) MainPIDs() ([]int, error) { return d.mainPIDs() }

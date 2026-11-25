@@ -16,7 +16,7 @@ import (
 	"github.com/zahT3/hotseat/internal/paths"
 )
 
-var desktopDriver desktop.Driver = desktop.MacDriver{}
+var desktopDriver = desktop.Default()
 
 func cmdDesktop(p paths.Paths, args []string, stdout, stderr io.Writer) int {
 	pos := positional(args)
