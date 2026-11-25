@@ -165,3 +165,22 @@ func TestParseResetYearBoundaryPast(t *testing.T) {
 		t.Errorf("got %v %v, want %v", got, ok, want)
 	}
 }
+
+// Model-scoped limits end the reset clause with a sentence instead of " · ":
+// "resets Nov 29 at 11am (Asia/Shanghai). Switch to another model, ...".
+func TestParseResetSentenceAfterZone(t *testing.T) {
+	loc := shanghai(t)
+	now := time.Date(2026, 11, 23, 22, 0, 0, 0, loc)
+	msg := "You've hit your Fable limit · resets Nov 29 at 11am (Asia/Shanghai). " +
+		"Switch to another model, or manage usage credits at " +
+		"https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+	got, ok := transcript.ParseResetTime(msg, now)
+	if want := time.Date(2026, 11, 29, 11, 0, 0, 0, loc); !ok || !got.Equal(want) {
+		t.Errorf("got %v %v, want %v", got, ok, want)
+	}
+	// A period inside the date must still not end the clause.
+	got, ok = transcript.ParseResetTime("limit · resets Nov. 29 at 11am (Asia/Shanghai). Switch models.", now)
+	if want := time.Date(2026, 11, 29, 11, 0, 0, 0, loc); !ok || !got.Equal(want) {
+		t.Errorf("abbreviated month: got %v %v, want %v", got, ok, want)
+	}
+}
