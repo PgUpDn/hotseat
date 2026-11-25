@@ -1,6 +1,7 @@
 package desktop_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,7 @@ import (
 )
 
 func useGOOS(t *testing.T, goos string) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	old := paths.GOOS
 	paths.GOOS = goos
 	t.Cleanup(func() { paths.GOOS = old })
@@ -115,20 +117,39 @@ func TestDefaultDriverPerPlatform(t *testing.T) {
 	}
 }
 
-// A stuck Desktop may be force-ended only when nothing but the app itself
-// is left: a Code session (run from the data dir) blocks it.
-func TestLinuxOnlyAppGuardsSessions(t *testing.T) {
+func TestLinuxQuitWithoutMainProcessIsAnError(t *testing.T) {
 	useGOOS(t, "linux")
-	app := desktop.Proc{PID: 1, Exe: "/usr/lib/claude-desktop/claude-desktop"}
-	helper := desktop.Proc{PID: 2, Exe: "/usr/lib/claude-desktop/resources/cowork-linux-helper"}
-	session := desktop.Proc{PID: 3, Exe: linuxHome + "/.config/Claude/claude-code/2.1.330/abc/claude"}
-	if !desktop.OnlyApp([]desktop.Proc{app, helper}) {
-		t.Error("app processes only: should be killable")
+	root := t.TempDir()
+	fakeProc(t, root, "101", "/usr/lib/claude-desktop/claude-desktop", "/", "--type=zygote")
+	if err := (desktop.LinuxDriver{Proc: root}).Quit(); !errors.Is(err, desktop.ErrNoMainProcess) {
+		t.Errorf("err %v", err)
 	}
-	if desktop.OnlyApp([]desktop.Proc{app, session}) {
-		t.Error("a session is left: must not be killable")
+}
+
+// --wait makes a failing launcher visible; a $ would be expanded by
+// systemd, so it never gets there.
+func TestSessionRunArgs(t *testing.T) {
+	got, err := desktop.SessionRunArgs("xdg-open", "claude://resume?session=11111111-2222-4333-8444-555555555555")
+	want := []string{"systemd-run", "--user", "--quiet", "--collect", "--wait", "-p", "KillMode=process",
+		"xdg-open", "claude://resume?session=11111111-2222-4333-8444-555555555555"}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q %v", got, err)
 	}
-	if desktop.OnlyApp(nil) {
-		t.Error("nothing left: nothing to kill")
+	if _, err := desktop.SessionRunArgs("xdg-open", "claude://resume?session=${HOME}"); err == nil {
+		t.Error("an argument with $ must be refused")
+	}
+}
+
+// The Chrome extension's native host is not Desktop: on macOS exactly the
+// bundled Helpers one, as before.
+func TestRunningNativeHostPerPlatform(t *testing.T) {
+	other := []desktop.Proc{{PID: 1, Exe: "/Applications/Claude.app/Contents/Resources/chrome-native-host"}}
+	if got := desktop.Running(other, home); len(got) != 1 {
+		t.Errorf("darwin: only Helpers/chrome-native-host is excluded, got %v", got)
+	}
+	useGOOS(t, "linux")
+	host := []desktop.Proc{{PID: 1, Exe: "/usr/lib/claude-desktop/resources/chrome-native-host"}}
+	if got := desktop.Running(host, linuxHome); len(got) != 0 {
+		t.Errorf("linux: got %v", got)
 	}
 }

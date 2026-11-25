@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/zahT3/hotseat/internal/account"
@@ -108,12 +109,22 @@ func Switch(p paths.Paths, reg account.Registry, d Driver, to string, opts Switc
 	if resume == "current" {
 		resume, _ = CurrentSession(p.DesktopDataDir(), from.AccountUUID, from.OrgUUID)
 	}
+	// The ID ends up in a claude:// URL handed to the system's opener, so
+	// it is checked before anything is quit or moved. One read from
+	// Desktop's own data that is not a UUID is dropped: the switch still
+	// happens, without reopening a session.
+	if resume != "" && !sessionIDRe.MatchString(resume) {
+		if opts.Resume != "current" {
+			return res, fmt.Errorf("session ID %q is not a UUID", resume)
+		}
+		resume = ""
+	}
 	wasRunning, err := quitAndWait(d, p.Home, opts.Timeout, opts.IfIdle)
 	if err != nil {
 		return res, err
 	}
 	defer func() {
-		if err != nil && wasRunning {
+		if err != nil && wasRunning && !errors.Is(err, ErrNotReopened) {
 			if _, journalErr := os.Lstat(p.DesktopJournal()); !errors.Is(journalErr, os.ErrNotExist) {
 				err = fmt.Errorf("%w; Desktop was left closed: run hotseat desktop recover", err)
 				return
@@ -150,10 +161,22 @@ func Switch(p paths.Paths, reg account.Registry, d Driver, to string, opts Switc
 	}
 	if resume != "" {
 		res.Resumed = resume
-		return res, d.OpenURL("claude://resume?session=" + resume)
+		err = d.OpenURL("claude://resume?session=" + resume)
+	} else {
+		err = d.Launch()
 	}
-	return res, d.Launch()
+	if err != nil {
+		// The swap is done and stays: only the reopening failed.
+		return res, fmt.Errorf("Claude Desktop is now set to %s, but %w (%v); open it yourself", to, ErrNotReopened, err)
+	}
+	return res, nil
 }
+
+// ErrNotReopened: the switch itself succeeded, but Desktop could not be
+// started again.
+var ErrNotReopened = errors.New("Hotseat could not reopen it")
+
+var sessionIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$`)
 
 // checkParked refuses to bring in a parked profile that is logged in to a
 // different account than the one it is filed under.

@@ -38,10 +38,10 @@ var linuxAppDirs = []string{"/usr/lib/claude-desktop/", "/opt/Claude/", "/opt/cl
 
 // inApp reports whether exe belongs to the Claude Desktop app itself.
 func inApp(exe string) bool {
-	if strings.HasSuffix(exe, "/chrome-native-host") {
-		return false
-	}
 	if paths.GOOS == "linux" {
+		if strings.HasSuffix(exe, "/chrome-native-host") {
+			return false
+		}
 		for _, dir := range linuxAppDirs {
 			if strings.HasPrefix(exe, dir) {
 				return true
@@ -49,7 +49,7 @@ func inApp(exe string) bool {
 		}
 		return false
 	}
-	return strings.Contains(exe, "/Claude.app/Contents/")
+	return strings.Contains(exe, "/Claude.app/Contents/") && !strings.HasSuffix(exe, "/Helpers/chrome-native-host")
 }
 
 // Running filters the processes that may touch Desktop's data dir: anything
@@ -109,9 +109,7 @@ func waitQuit(d Driver, home string, running []Proc, timeout time.Duration) erro
 	if err := d.Quit(); err != nil {
 		return err
 	}
-	start := time.Now()
-	deadline := start.Add(timeout)
-	forced := false
+	deadline := time.Now().Add(timeout)
 	pc, cheap := d.(pidChecker)
 	for {
 		if cheap {
@@ -128,13 +126,6 @@ func waitQuit(d Driver, home string, running []Proc, timeout time.Duration) erro
 		if len(left) == 0 {
 			return nil
 		}
-		if sk, ok := d.(stuckKiller); ok && !forced && time.Since(start) >= stuckAfter {
-			forced = true
-			if sk.KillStuck(left) {
-				time.Sleep(300 * time.Millisecond)
-				continue
-			}
-		}
 		if time.Now().After(deadline) {
 			pids := make([]string, len(left))
 			for i, p := range left {
@@ -148,17 +139,6 @@ func waitQuit(d Driver, home string, running []Proc, timeout time.Duration) erro
 		}
 	}
 }
-
-// stuckKiller is implemented by drivers that can end an app that finished
-// quitting but did not exit. It must refuse while any session process is
-// left, and reports whether it ended anything.
-type stuckKiller interface {
-	KillStuck(left []Proc) bool
-}
-
-// stuckAfter is past Claude Desktop's own 15 s quit watchdog, which is
-// meant to force the exit by then.
-var stuckAfter = 17 * time.Second
 
 func anyAlive(pc pidChecker, procs []Proc) bool {
 	for _, p := range procs {

@@ -7,6 +7,7 @@ package desktop
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,11 +85,17 @@ func (LinuxDriver) Alive(pid int) bool {
 
 // Quit sends SIGTERM to Desktop's main (browser) process. Electron treats
 // it like the Quit menu item: windows close, Code sessions are told to
-// stop, helpers exit. Like the Mac driver it never force-kills.
+// stop, helpers exit. Like the Mac driver it never force-kills: a Desktop
+// that does not exit in time is reported with its PIDs.
 func (d LinuxDriver) Quit() error {
 	pids, err := d.mainPIDs()
 	if err != nil {
 		return err
+	}
+	if len(pids) == 0 {
+		// Nothing got the signal: say so, instead of waiting for an exit
+		// nobody asked for.
+		return ErrNoMainProcess
 	}
 	for _, pid := range pids {
 		if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
@@ -97,6 +104,10 @@ func (d LinuxDriver) Quit() error {
 	}
 	return nil
 }
+
+// ErrNoMainProcess: processes of Claude Desktop are running, but its main
+// process, the one to ask to quit, was not found among them.
+var ErrNoMainProcess = errors.New("Claude Desktop's main process was not found; quit it yourself and retry")
 
 // mainPIDs finds Desktop's browser processes: the app's claude-desktop
 // executable without a --type= argument.
@@ -130,38 +141,10 @@ func isMainProcess(cmdline []byte) bool {
 	return len(cmdline) > 0
 }
 
-// OnlyApp reports whether every process left belongs to the app itself:
-// no Code session (run from the data dir) is among them.
-func OnlyApp(left []Proc) bool {
-	for _, p := range left {
-		if !inApp(p.Exe) {
-			return false
-		}
-	}
-	return len(left) > 0
-}
-
-// KillStuck ends a Desktop that finished quitting but did not exit. Seen
-// on Linux: after SIGTERM Desktop runs its cleanup, its sessions end, then
-// the main process spins relaunching a dying GPU process and its own
-// "forcing exit" watchdog does not get it out; the windows are gone and
-// the data dir stays locked. Only the app's own processes are killed, and
-// only when no session process is left, so a working session is never cut.
-func (LinuxDriver) KillStuck(left []Proc) bool {
-	if !OnlyApp(left) {
-		return false
-	}
-	for _, p := range left {
-		_ = syscall.Kill(p.PID, syscall.SIGKILL)
-	}
-	return true
-}
-
 // Launch and OpenURL go through `systemd-run --user`, so the app starts
 // inside the graphical session (its DISPLAY, Wayland socket and session
-// bus) even when hotseat runs from an SSH login or a hook.
-// KillMode=process: the launcher exits at once, and without it systemd
-// would kill the app it just started along with the unit.
+// bus) even when hotseat runs from an SSH login or a hook. This needs a
+// systemd user session.
 func (LinuxDriver) Launch() error {
 	return sessionRun("gtk-launch", linuxDesktopID)
 }
@@ -171,5 +154,35 @@ func (LinuxDriver) OpenURL(url string) error {
 }
 
 func sessionRun(args ...string) error {
-	return exec.Command("systemd-run", append([]string{"--user", "--quiet", "--collect", "-p", "KillMode=process"}, args...)...).Run()
+	argv, err := SessionRunArgs(args...)
+	if err != nil {
+		return err
+	}
+	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+	if err != nil {
+		if text := strings.TrimSpace(string(out)); text != "" {
+			return fmt.Errorf("%s: %w: %s", args[0], err, text)
+		}
+		return fmt.Errorf("%s: %w", args[0], err)
+	}
+	return nil
+}
+
+// SessionRunArgs is the systemd-run command line that runs args in the
+// user's session.
+//   - --wait: without it systemd-run returns once the unit started, and a
+//     launcher that fails (no desktop entry, no gtk-launch) would look
+//     like success. The launchers exit as soon as the app is started.
+//   - KillMode=process: when the launcher exits, systemd would otherwise
+//     kill the app it just started along with the unit.
+//   - systemd expands $VAR and ${VAR} in the command's arguments. Nothing
+//     Hotseat passes has a $, so an argument with one is refused rather
+//     than escaped.
+func SessionRunArgs(args ...string) ([]string, error) {
+	for _, a := range args {
+		if strings.Contains(a, "$") {
+			return nil, fmt.Errorf("refusing to pass %q to systemd-run: it would expand the $", a)
+		}
+	}
+	return append([]string{"systemd-run", "--user", "--quiet", "--collect", "--wait", "-p", "KillMode=process"}, args...), nil
 }

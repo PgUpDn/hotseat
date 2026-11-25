@@ -1,9 +1,6 @@
 package desktop
 
-import (
-	"testing"
-	"time"
-)
+import "testing"
 
 func SetBeforeSwapStep(t *testing.T, fn func(step string) error) {
 	t.Helper()
@@ -13,10 +10,3 @@ func SetBeforeSwapStep(t *testing.T, fn func(step string) error) {
 }
 
 func (d LinuxDriver) MainPIDs() ([]int, error) { return d.mainPIDs() }
-
-func SetStuckAfter(t *testing.T, d time.Duration) {
-	t.Helper()
-	old := stuckAfter
-	stuckAfter = d
-	t.Cleanup(func() { stuckAfter = old })
-}
