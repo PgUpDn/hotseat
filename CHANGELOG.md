@@ -5,7 +5,7 @@
 - Linux: the CLI runs on Linux, including Claude Desktop for Linux. It finds Desktop through /proc, quits it with SIGTERM (never a force-kill: a Desktop that does not exit in time is reported with its PIDs), and starts it with `systemd-run --user gtk-launch`, which needs a systemd user session. Desktop's data is looked for under `XDG_CONFIG_HOME` when set. The shim and aliases go to `~/.bashrc`, or `~/.zshrc` when zsh is the login shell, and the limit handoff asks with zenity.
 - `hotseat desktop switch --resume` refuses a session ID that is not a UUID before anything is quit or moved.
 - When a Desktop switch succeeds but Desktop cannot be reopened, Hotseat says so instead of reporting a plain failure or success.
-- A limit on one model ("You've hit your Fable limit …") is recorded as a limit on that model, not on the account: the account is no longer shown as LIMIT or skipped as a handoff target while its other models still work. `hotseat usage` and the account's card show "Fable limit until …", and a handoff away from a model limit skips accounts limited on the same model.
+- A limit on one model ("You've hit your Fable limit …") is recorded as a limit on that model, not on the account: the account is no longer shown as LIMIT or skipped as a handoff target while its other models still work. `hotseat usage` and the account's card show "Fable limit until …", and a handoff away from a model limit skips accounts limited on the same model. A limit named after the plan ("Max plan", "Pro") stays an account-wide limit, and a model name with a version ("Opus 5.5") is read whole.
 
 ## 0.1.1
 

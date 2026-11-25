@@ -129,27 +129,35 @@ func ContextTokens(path string) int {
 	return 0
 }
 
-// "hit your <name> limit" at the start of a limit message.
-var limitNameRe = regexp.MustCompile(`(?i)^\s*you[’']ve hit your ([^·.\n]{1,40}?) limit\b`)
+// "hit your <name> limit" at the start of a limit message. A period ends
+// the name unless a digit follows, so "Opus 5.5" stays whole.
+var limitNameRe = regexp.MustCompile(`(?i)^\s*you[’']ve hit your ((?:[^·.\n]|\.\d){1,40}?) limit\b`)
 
-// planWideLimits are the limit names that are about the whole plan.
+// planWideLimits are the first words of limit names that are about the
+// whole plan: the windows and budgets, and the plan names themselves
+// ("Max plan", "Pro"), which are capitalised like a model.
 var planWideLimits = map[string]bool{
 	"usage": true, "session": true, "weekly": true, "daily": true, "monthly": true,
-	"5-hour": true, "five-hour": true, "5 hour": true, "rate": true, "plan": true, "spend": true, "spending": true,
+	"5-hour": true, "five-hour": true, "5": true, "five": true, "rate": true, "plan": true, "spend": true, "spending": true,
+	"free": true, "pro": true, "max": true, "team": true, "ultra": true, "enterprise": true,
 }
 
 // LimitModel names the model a limit message is about ("You've hit your
 // Fable limit · ..." gives "Fable"), or "" for a plan-wide limit and for
-// anything it does not recognise: the name must start with a capital
-// letter, as model names do and "weekly" or "session" do not, so an
-// unknown plan-wide wording is not mistaken for a model.
+// anything it does not recognise. Taking a plan-wide limit for a model
+// would leave the account limited without showing LIMIT, so the name must
+// start with a capital letter, as model names do and "weekly" or
+// "session" do not, and its first word must not be a plan-wide one.
 func LimitModel(msg string) string {
 	m := limitNameRe.FindStringSubmatch(msg)
 	if m == nil {
 		return ""
 	}
 	name := strings.TrimSpace(m[1])
-	if name == "" || planWideLimits[strings.ToLower(name)] || name[0] < 'A' || name[0] > 'Z' {
+	if name == "" || name[0] < 'A' || name[0] > 'Z' {
+		return ""
+	}
+	if first, _, _ := strings.Cut(strings.ToLower(name), " "); planWideLimits[first] {
 		return ""
 	}
 	return name
