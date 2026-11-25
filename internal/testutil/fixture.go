@@ -17,6 +17,9 @@ func FakeHome(t *testing.T) paths.Paths {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("HOTSEAT_HOME", filepath.Join(home, ".config", "hotseat"))
+	// On Linux Desktop's data dir follows XDG_CONFIG_HOME; without this a
+	// test could look at the real one.
+	t.Setenv("XDG_CONFIG_HOME", "")
 	p, err := paths.FromEnv()
 	if err != nil {
 		t.Fatal(err)

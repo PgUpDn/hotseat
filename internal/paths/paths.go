@@ -1,5 +1,6 @@
 // Package paths derives every file location Hotseat uses from $HOME and
-// $HOTSEAT_HOME, so tests can redirect everything to temp dirs.
+// $HOTSEAT_HOME (on Linux also $XDG_CONFIG_HOME and $SHELL), so tests can
+// redirect everything to temp dirs.
 package paths
 
 import (
@@ -54,24 +55,27 @@ func (p Paths) DesktopStateFile() string { return filepath.Join(p.DesktopStoreDi
 func (p Paths) DesktopJournal() string   { return filepath.Join(p.DesktopStoreDir(), "swap.json") }
 
 // Zshrc is the shell startup file that carries the shim's PATH block and
-// the CLAUDE_CONFIG_DIR aliases. On Linux the login shell is usually bash,
-// so without a ~/.zshrc it is ~/.bashrc; both read the same export/alias
-// lines.
+// the CLAUDE_CONFIG_DIR aliases: ~/.zshrc on macOS. On Linux it follows the
+// login shell ($SHELL), ~/.zshrc for zsh and ~/.bashrc otherwise; both read
+// the same export/alias lines. Which files happen to exist does not decide
+// it: a bash user may have a stale ~/.zshrc, and creating one later must
+// not orphan the block in ~/.bashrc.
 func (p Paths) Zshrc() string {
-	zshrc := filepath.Join(p.Home, ".zshrc")
-	if GOOS == "linux" {
-		if _, err := os.Stat(zshrc); err != nil {
-			return filepath.Join(p.Home, ".bashrc")
-		}
+	if GOOS == "linux" && filepath.Base(os.Getenv("SHELL")) != "zsh" {
+		return filepath.Join(p.Home, ".bashrc")
 	}
-	return zshrc
+	return filepath.Join(p.Home, ".zshrc")
 }
 
-// DesktopDataDir is the default Claude Desktop data dir: Electron's
-// userData, ~/Library/Application Support/Claude on macOS and
-// ~/.config/Claude on Linux.
+// DesktopDataDir is the default Claude Desktop data dir, Electron's
+// userData: ~/Library/Application Support/Claude on macOS. On Linux it is
+// Claude under $XDG_CONFIG_HOME when that is set to an absolute path (the
+// XDG rule Electron follows), else ~/.config/Claude.
 func (p Paths) DesktopDataDir() string {
 	if GOOS == "linux" {
+		if dir := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(dir) {
+			return filepath.Join(filepath.Clean(dir), "Claude")
+		}
 		return filepath.Join(p.Home, ".config", "Claude")
 	}
 	return filepath.Join(p.Home, "Library", "Application Support", "Claude")

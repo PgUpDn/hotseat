@@ -61,6 +61,7 @@ func TestFromEnvRequiresHome(t *testing.T) {
 }
 
 func TestDesktopDataDirPerPlatform(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	p := paths.Paths{Home: "/h", StateDir: "/h/.config/hotseat"}
 	useGOOS(t, "darwin")
 	if got := p.DesktopDataDir(); got != "/h/Library/Application Support/Claude" {
@@ -72,21 +73,42 @@ func TestDesktopDataDirPerPlatform(t *testing.T) {
 	}
 }
 
-// Linux logins usually run bash: without a ~/.zshrc the shim block and the
-// aliases live in ~/.bashrc. An existing ~/.zshrc still wins.
-func TestZshrcFallsBackToBashrcOnLinux(t *testing.T) {
-	home := t.TempDir()
-	p := paths.Paths{Home: home, StateDir: filepath.Join(home, ".config", "hotseat")}
+// Electron's userData follows XDG_CONFIG_HOME, so Hotseat must look where
+// Desktop does. A relative value is invalid per the XDG spec and ignored;
+// macOS does not use the variable.
+func TestDesktopDataDirHonoursXDGConfigHome(t *testing.T) {
+	p := paths.Paths{Home: "/h", StateDir: "/h/.config/hotseat"}
 	useGOOS(t, "linux")
-	if got := p.Zshrc(); got != filepath.Join(home, ".bashrc") {
-		t.Errorf("no zshrc: %s", got)
+	t.Setenv("XDG_CONFIG_HOME", "/data/cfg/")
+	if got := p.DesktopDataDir(); got != "/data/cfg/Claude" {
+		t.Errorf("absolute: %s", got)
 	}
-	os.WriteFile(filepath.Join(home, ".zshrc"), nil, 0o644)
-	if got := p.Zshrc(); got != filepath.Join(home, ".zshrc") {
-		t.Errorf("with zshrc: %s", got)
+	t.Setenv("XDG_CONFIG_HOME", "relative/cfg")
+	if got := p.DesktopDataDir(); got != "/h/.config/Claude" {
+		t.Errorf("relative: %s", got)
 	}
 	useGOOS(t, "darwin")
-	os.Remove(filepath.Join(home, ".zshrc"))
+	t.Setenv("XDG_CONFIG_HOME", "/data/cfg")
+	if got := p.DesktopDataDir(); got != "/h/Library/Application Support/Claude" {
+		t.Errorf("darwin: %s", got)
+	}
+}
+
+// On Linux the rc file follows the login shell, not which files exist: a
+// bash user with a stale ~/.zshrc still gets ~/.bashrc.
+func TestZshrcFollowsLoginShellOnLinux(t *testing.T) {
+	home := t.TempDir()
+	p := paths.Paths{Home: home, StateDir: filepath.Join(home, ".config", "hotseat")}
+	os.WriteFile(filepath.Join(home, ".zshrc"), nil, 0o644)
+	useGOOS(t, "linux")
+	for shell, want := range map[string]string{"/bin/bash": ".bashrc", "/usr/bin/zsh": ".zshrc", "": ".bashrc", "/usr/bin/fish": ".bashrc"} {
+		t.Setenv("SHELL", shell)
+		if got := p.Zshrc(); got != filepath.Join(home, want) {
+			t.Errorf("SHELL=%q: %s", shell, got)
+		}
+	}
+	useGOOS(t, "darwin")
+	t.Setenv("SHELL", "/bin/bash")
 	if got := p.Zshrc(); got != filepath.Join(home, ".zshrc") {
 		t.Errorf("darwin: %s", got)
 	}
