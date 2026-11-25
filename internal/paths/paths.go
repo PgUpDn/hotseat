@@ -1,12 +1,18 @@
 // Package paths derives every file location Hotseat uses from $HOME and
-// $HOTSEAT_HOME, so tests can redirect everything to temp dirs.
+// $HOTSEAT_HOME (on Linux also $XDG_CONFIG_HOME and $SHELL), so tests can
+// redirect everything to temp dirs.
 package paths
 
 import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 )
+
+// GOOS picks the platform's file layout. A variable so tests can check the
+// Linux layout on a Mac and the other way round.
+var GOOS = runtime.GOOS
 
 type Paths struct {
 	Home     string
@@ -37,7 +43,6 @@ func (p Paths) CurrentFile() string   { return filepath.Join(p.StateDir, "curren
 func (p Paths) OverridesFile() string { return filepath.Join(p.StateDir, "share-overrides.json") }
 func (p Paths) BackupsDir() string    { return filepath.Join(p.StateDir, "backups") }
 func (p Paths) ShimDir() string       { return filepath.Join(p.StateDir, "bin") }
-func (p Paths) Zshrc() string         { return filepath.Join(p.Home, ".zshrc") }
 func (p Paths) UsageDir() string      { return filepath.Join(p.StateDir, "usage") }
 func (p Paths) ChainFile() string     { return filepath.Join(p.StateDir, "statusline-chain.json") }
 
@@ -49,7 +54,29 @@ func (p Paths) DesktopProfileDir(name string) string {
 func (p Paths) DesktopStateFile() string { return filepath.Join(p.DesktopStoreDir(), "state.json") }
 func (p Paths) DesktopJournal() string   { return filepath.Join(p.DesktopStoreDir(), "swap.json") }
 
-// DesktopDataDir is the default Claude Desktop data dir.
+// Zshrc is the shell startup file that carries the shim's PATH block and
+// the CLAUDE_CONFIG_DIR aliases: ~/.zshrc on macOS. On Linux it follows the
+// login shell ($SHELL), ~/.zshrc for zsh and ~/.bashrc otherwise; both read
+// the same export/alias lines. Which files happen to exist does not decide
+// it: a bash user may have a stale ~/.zshrc, and creating one later must
+// not orphan the block in ~/.bashrc.
+func (p Paths) Zshrc() string {
+	if GOOS == "linux" && filepath.Base(os.Getenv("SHELL")) != "zsh" {
+		return filepath.Join(p.Home, ".bashrc")
+	}
+	return filepath.Join(p.Home, ".zshrc")
+}
+
+// DesktopDataDir is the default Claude Desktop data dir, Electron's
+// userData: ~/Library/Application Support/Claude on macOS. On Linux it is
+// Claude under $XDG_CONFIG_HOME when that is set to an absolute path (the
+// XDG rule Electron follows), else ~/.config/Claude.
 func (p Paths) DesktopDataDir() string {
+	if GOOS == "linux" {
+		if dir := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(dir) {
+			return filepath.Join(filepath.Clean(dir), "Claude")
+		}
+		return filepath.Join(p.Home, ".config", "Claude")
+	}
 	return filepath.Join(p.Home, "Library", "Application Support", "Claude")
 }
