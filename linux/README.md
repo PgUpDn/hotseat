@@ -1,6 +1,6 @@
 # Hotseat top-bar app for Linux (experimental)
 
-**Status: experimental.** It works on GNOME with an X11 session only (tried on Ubuntu 24.04), and it may lag behind the Mac app: new features land there first.
+**Status: experimental.** It works on GNOME with an X11 session only (tried on Ubuntu 24.04), and it may lag behind the Mac app: new features land there first. It is maintained by [@PgUpDn](https://github.com/PgUpDn) on a best-effort basis, not by Hotseat's author; changes under `linux/` go to them for review (see `.github/CODEOWNERS`).
 
 `hotseat-indicator` is a port of the macOS menu bar app (`macos/Sources/Hotseat`) to GTK: a top-bar icon whose menu has one card per account, then Settings…, Setup…, Refresh and Quit; a Settings window (Accounts, General); and a Setup window with the same steps and wording as the Mac app.
 
