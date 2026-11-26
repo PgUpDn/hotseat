@@ -26,10 +26,10 @@ SIGUSR1 toggles the menu (to open it from a script or over SSH).
 import json
 import math
 import os
-import re
 import shlex
 import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -42,6 +42,13 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo  # noqa: E402
 
 import cairo  # noqa: E402
 
+# python3 -I leaves the script's directory off sys.path.
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from hotseat_format import (  # noqa: E402
+    ICON_CHOICES, autostart_entry, avatar_text, display_name, error_text, fmt_age, fmt_limit, fmt_model_limit,
+    fmt_value, is_limited, is_model_limited, observed_at, removal_problem, setup_steps, tilde, valid_name,
+    win_percent, windows)
+
 HOME = os.path.expanduser("~")
 # HOTSEAT_PATH points the app at another CLI, e.g. macos/demo/hotseat-demo.
 HOTSEAT = os.environ.get("HOTSEAT_PATH") or os.path.join(HOME, ".local", "bin", "hotseat")
@@ -50,16 +57,6 @@ PREFS = os.path.join(HOME, ".config", "hotseat-indicator", "prefs.json")
 AUTOSTART = os.path.join(HOME, ".config", "autostart", "hotseat-indicator.desktop")
 REFRESH_SECONDS = 60
 CARD_WIDTH = 380
-
-# The Mac app's SF Symbol choices and their emoji counterparts. An account
-# whose icon was picked on a Mac shows the matching emoji here.
-ICON_CHOICES = [
-    ("person.fill", "👤"), ("briefcase.fill", "💼"), ("house.fill", "🏠"), ("star.fill", "⭐"),
-    ("bolt.fill", "⚡"), ("leaf.fill", "🍃"), ("flame.fill", "🔥"), ("moon.fill", "🌙"),
-    ("sun.max.fill", "☀️"), ("heart.fill", "❤️"), ("graduationcap.fill", "🎓"), ("hammer.fill", "🔨"),
-    ("paintbrush.fill", "🖌️"), ("gamecontroller.fill", "🎮"), ("airplane", "✈️"), ("cup.and.saucer.fill", "☕"),
-]
-SYMBOL_EMOJI = dict(ICON_CHOICES)
 
 CSS = b"""
 .hs-panel { border: 1px solid alpha(@theme_fg_color, 0.25); }
@@ -92,122 +89,6 @@ progressbar.hs-high progress { background-color: #e5a50a; }
 """
 
 
-# ---------- text, following HotseatKit/Format.swift ----------
-
-def win_reset(w, now):
-    return bool(w.get("reset")) or (w.get("resetsAt", 0) > 0 and w["resetsAt"] <= now)
-
-
-def win_percent(w, now):
-    return 0.0 if win_reset(w, now) else float(w.get("usedPercent", 0))
-
-
-def fmt_when(unix, now):
-    t, n = time.localtime(unix), time.localtime(now)
-    if (t.tm_year, t.tm_yday) == (n.tm_year, n.tm_yday):
-        return time.strftime("%H:%M", t)
-    if unix - now < 6 * 86400:
-        return time.strftime("%a %H:%M", t)
-    return time.strftime("%b %-d %H:%M", t)
-
-
-def fmt_resets(unix, now):
-    left = unix - now
-    if left >= 86400:
-        return fmt_when(unix, now)
-    h, m = divmod(int(max(0, (left + 59) // 60)), 60)
-    if h == 0:
-        return "in %dm" % m
-    return "in %dh" % h if m == 0 else "in %dh %dm" % (h, m)
-
-
-def fmt_value(w, now):
-    if not w:
-        return "?"
-    if win_reset(w, now):
-        return "0% (reset)"
-    s = "%.0f%%" % w.get("usedPercent", 0)
-    if w.get("resetsAt", 0) > 0:
-        s += " · " + fmt_resets(w["resetsAt"], now)
-    return s
-
-
-def fmt_age(observed, now):
-    if not observed:
-        return "no data yet"
-    d = max(0, now - observed)
-    if d < 60:
-        return "updated just now"
-    if d < 3600:
-        return "updated %d min ago" % (d // 60)
-    if d < 48 * 3600:
-        return "updated %d h ago" % (d // 3600)
-    return "updated %d d ago" % (d // 86400)
-
-
-def fmt_limit(limit, now):
-    if not limit or not limit.get("resetsAt"):
-        return "Limit reached"
-    if limit["resetsAt"] - now < 86400:
-        return "Limit · resets " + fmt_resets(limit["resetsAt"], now)
-    return "Limit until " + fmt_when(limit["resetsAt"], now)
-
-
-def display_name(a):
-    note = (a.get("note") or "").strip()
-    if note:
-        return note
-    email = (a.get("email") or "").strip()
-    return email.split("@")[0] if email else a["account"]
-
-
-def avatar_text(a):
-    """The emoji the user picked (or the one matching a Mac symbol), else
-    the initial."""
-    icon = (a.get("icon") or "").strip()
-    if icon:
-        return SYMBOL_EMOJI.get(icon, icon if not re.match(r"^[a-z0-9.]+$", icon) else "")\
-            or display_name(a)[:1].upper()
-    return display_name(a)[:1].upper()
-
-
-def is_limited(a, now):
-    if not a.get("limitActive"):
-        return False
-    r = (a.get("limit") or {}).get("resetsAt", 0)
-    return r <= 0 or r > now
-
-
-def windows(a):
-    return [w for w in (a.get("fiveHour"), a.get("sevenDay")) if w]
-
-
-def observed_at(a):
-    return max([w.get("observedAt", 0) for w in windows(a)] or [0])
-
-
-def title_text(snap, failed, now):
-    """Format.title: the current account's 5-hour use, LIMIT, or "!"."""
-    if failed:
-        return "!"
-    a = next((x for x in (snap or {}).get("accounts", []) if x["account"] == snap.get("current")), None)
-    if not a:
-        return ""
-    if is_limited(a, now):
-        return "LIMIT"
-    if not a.get("fiveHour"):
-        return ""
-    return "%.0f%%" % win_percent(a["fiveHour"], now)
-
-
-def tilde(path):
-    return "~" + path[len(HOME):] if path and path.startswith(HOME) else (path or "—")
-
-
-def valid_name(name):
-    return re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", name) is not None
-
-
 # ---------- the hotseat CLI (HotseatKit/CLI.swift) ----------
 
 def run_raw(args, timeout):
@@ -221,44 +102,6 @@ def run_raw(args, timeout):
         return -2, "", "hotseat did not answer within %d s" % timeout
     except OSError as e:
         return -1, "", "hotseat CLI not found; tried: %s (%s)" % (HOTSEAT, e.strerror)
-
-
-def error_text(status, stderr):
-    return stderr if stderr else "hotseat exited with %d" % status
-
-
-def setup_steps(status, cli_version):
-    """SetupStatus.steps() plus the CLI step, as (id, title, done, detail,
-    commands)."""
-    if cli_version:
-        cli = ("cli", "Command line tool", True, "hotseat %s is installed" % cli_version, None)
-    else:
-        cli = ("cli", "Command line tool", False,
-               "hotseat was not found at %s. Copy the Linux build there." % tilde(HOTSEAT), None)
-    if status is None:
-        return [cli]
-    accounts, logins = status.get("accounts", 0), status.get("loginsFound", 0)
-    conflicts, actions = status.get("shareConflicts", 0), status.get("shareActions", 0)
-    desktop = status.get("desktop", "absent")
-    share = "Links sessions, settings and skills of every account to ~/.claude. Close running claude sessions first."
-    if conflicts > 0:
-        share = ("%d files differ between accounts; ~/.claude's copy is used and the others stay where they "
-                 "are (see: hotseat share plan)." % conflicts)
-    return [
-        cli,
-        ("accounts", "Find your Claude logins", accounts > 0,
-         "No Claude Code login found yet: run claude once in Terminal and log in, then click Check Again."
-         if logins == 0 else "Registers the ~/.claude* dirs you are logged in to.", [["init"]]),
-        ("share", "Share your work data", accounts > 0 and actions == 0, share, [["share", "apply", "--json"]]),
-        ("shim", "Follow the current account", bool(status.get("shim")),
-         "New terminals start claude as the account you pick", [["shim", "install"]]),
-        ("tracking", "Usage and limit handoff", bool(status.get("statusline")) and bool(status.get("hook")),
-         "Records usage from Claude Code's status line; offers another account when one runs out",
-         [["statusline", "install"], ["hook", "install"]]),
-        ("desktop", "Claude Desktop", desktop != "available",
-         "Claude Desktop is not installed or never opened" if desktop == "absent"
-         else "Lets Hotseat switch Desktop's account", [["desktop", "adopt"]]),
-    ]
 
 
 def load_prefs():
@@ -608,6 +451,9 @@ class Indicator(Gtk.Application):
             body.pack_start(label("⚠ CLI login: " + a["loginProblem"], "hs-warn", wrap=True), False, False, 0)
         if is_limited(a, now):
             body.pack_start(label("⛔ " + fmt_limit(a.get("limit"), now), "hs-warn"), False, False, 0)
+        if is_model_limited(a, now):
+            # Orange, not red: the account's other models still work.
+            body.pack_start(label("⚠ " + fmt_model_limit(a["modelLimit"], now), "hs-orange"), False, False, 0)
         if a.get("desktopProblem"):
             body.pack_start(label("⚠ Desktop: " + a["desktopProblem"], "hs-orange", wrap=True), False, False, 0)
         if a.get("error"):
@@ -717,16 +563,20 @@ class Indicator(Gtk.Application):
         snap = self.snapshot
         if self.switching or not snap or snap.get("desktop", {}).get("active") == name:
             return
-        if snap.get("desktop", {}).get("running") and self.ask_before_restart:
-            who = self.label_of(name)
-            pressed, _, _ = self.alert(
-                "Restart Claude Desktop as %s?" % who,
-                "Hotseat will quit Claude Desktop and reopen it as %s on the session you were in. Anything "
-                "running in Desktop right now will stop. Terminal sessions are not affected." % who,
-                ["Restart Desktop", "Cancel"])
-            if pressed != 0:
-                return
-        self.start_switch(name, ["desktop", "switch", name, "--resume", "current", "--json"], 120)
+        restart = not self.ask_before_restart
+
+        def done(result):
+            # hotseat decides on live state whether Desktop must restart:
+            # with --if-idle it exits 3 instead of quitting a running one.
+            if result[0] == 3 and not restart:
+                self.ask_to_restart_desktop(name, desktop_only=True)
+                return True
+            return False
+        self.start_switch(name, self.desktop_switch_args(name, restart), 120, done)
+
+    @staticmethod
+    def desktop_switch_args(name, restart):
+        return ["desktop", "switch", name, "--resume", "current", "--json"] + ([] if restart else ["--if-idle"])
 
     def begin_switch(self, name):
         snap = self.snapshot
@@ -738,27 +588,30 @@ class Indicator(Gtk.Application):
         restart = not self.ask_before_restart
 
         def done(result):
-            # hotseat decides on live state whether Desktop must restart.
             if result[0] == 3 and not restart:
                 self.ask_to_restart_desktop(name)
                 return True
             return False
         self.start_switch(name, ["use", name] + (["--yes"] if restart else []) + ["--json"], 120, done)
 
-    def ask_to_restart_desktop(self, name):
+    def ask_to_restart_desktop(self, name, desktop_only=False):
         who = self.label_of(name)
+        terminals = ("Terminal sessions are not affected." if desktop_only
+                     else "New terminal sessions already use %s." % who)
         pressed, dont_ask, _ = self.alert(
             "Restart Claude Desktop as %s?" % who,
-            "New terminal sessions already use %s. Claude Desktop is running as another account: Hotseat will "
-            "quit it and reopen it as %s on the session you were in. Anything running in Desktop right now "
-            "will stop." % (who, who),
+            "%s Hotseat will quit Claude Desktop and reopen it as %s on the session you were in. Anything "
+            "running in Desktop right now will stop." % (terminals, who),
             ["Restart Desktop", "Not Now"], check="Don't ask again")
         if pressed != 0:
             self.finish_switch()
             return
         if dont_ask:
             self.set_ask_before_restart(False)
-        self.start_switch(name, ["use", name, "--yes", "--json"], 120)
+        if desktop_only:
+            self.start_switch(name, self.desktop_switch_args(name, True), 120)
+        else:
+            self.start_switch(name, ["use", name, "--yes", "--json"], 120)
 
     # ----- Settings (SettingsView.swift) -----
 
@@ -1022,17 +875,25 @@ class Indicator(Gtk.Application):
             "profile into a Hotseat backup; nothing is deleted. Close any terminal using it first. Your shared "
             "work (projects, history) stays.",
             ["Remove", "Cancel"], destructive=True)
-        if pressed == 0:
-            self.run_then_refresh(["remove", name, "--yes", "--json"], 60)
+        if pressed != 0:
+            return
+
+        def done(result):
+            status, out, err = result
+            # The account can be gone while Claude Code failed to sign it
+            # out; the result says so, the exit code does not.
+            problem = error_text(status, err) if status != 0 else removal_problem(name, out)
+            if problem:
+                self.show(problem)
+            self.refresh()
+        self.background(lambda: run_raw(["remove", name, "--yes", "--json"], 60), done)
 
     def set_launch_at_login(self, on):
         try:
             if on:
                 os.makedirs(os.path.dirname(AUTOSTART), exist_ok=True)
                 with open(AUTOSTART, "w") as f:
-                    f.write("[Desktop Entry]\nType=Application\nName=Hotseat\n"
-                            "Comment=Claude account switcher (top-bar icon)\n"
-                            "Exec=/usr/bin/python3 -I %s\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n" % SELF)
+                    f.write(autostart_entry(SELF))
             elif os.path.exists(AUTOSTART):
                 os.remove(AUTOSTART)
         except OSError as e:

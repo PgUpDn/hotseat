@@ -1,4 +1,6 @@
-# Hotseat top-bar app for Linux (draft)
+# Hotseat top-bar app for Linux (experimental)
+
+**Status: experimental.** It works on GNOME with an X11 session only (tried on Ubuntu 24.04), and it may lag behind the Mac app: new features land there first.
 
 `hotseat-indicator` is a port of the macOS menu bar app (`macos/Sources/Hotseat`) to GTK: a top-bar icon whose menu has one card per account, then Settings…, Setup…, Refresh and Quit; a Settings window (Accounts, General); and a Setup window with the same steps and wording as the Mac app.
 
@@ -12,8 +14,11 @@ Like the Mac app it only displays and clicks. Everything shown comes from `hotse
 
 ## Run
 
+The two files go side by side:
+
 ```sh
 install -m 755 linux/hotseat-indicator ~/.local/bin/hotseat-indicator
+install -m 644 linux/hotseat_format.py ~/.local/bin/hotseat_format.py
 hotseat-indicator &
 ```
 
@@ -29,7 +34,16 @@ All forced by the platform:
 - There is no bundled CLI to install: Setup's first step only checks that `~/.local/bin/hotseat` exists.
 - "Add Account…" opens `hotseat add <name>` in gnome-terminal (or `x-terminal-emulator`).
 
-## Open questions
+## Tests
 
-- It is one Python file with no tests. The text formatting follows `HotseatKit/Format.swift`; if this is wanted in the repo, those functions should get tests (and could move to a module).
-- `Gtk.StatusIcon` is deprecated in GTK 3 and gone in GTK 4. AppIndicator (`gir1.2-ayatanaappindicator3-0.1`) is the supported way but cannot open a custom window on click, only a plain menu, so the cards would have to become menu rows.
+`hotseat_format.py` holds everything that does not need GTK: the text on the cards (the same strings as `HotseatKit/Format.swift` for the same inputs), the setup steps, reading the result of `hotseat remove`, and the autostart entry. CI runs its tests on Linux:
+
+```sh
+python3 -m unittest discover -s linux -p 'test_*.py'
+```
+
+The windows themselves are not tested automatically.
+
+## Next step
+
+The icon is a `Gtk.StatusIcon`, which is deprecated in GTK 3 and gone in GTK 4. AppIndicator (`gir1.2-ayatanaappindicator3-0.1`) is where this has to go. It only opens a plain menu on click, not a custom window, so the cards will become menu rows.
