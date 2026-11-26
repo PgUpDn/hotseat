@@ -206,3 +206,34 @@ func TestLimitModel(t *testing.T) {
 		}
 	}
 }
+
+// A capitalised plan name is not a model: a limit worded after the plan
+// must stay an account-wide limit, or the account would be limited without
+// showing LIMIT.
+func TestLimitModelPlanNamesAreNotModels(t *testing.T) {
+	for _, msg := range []string{
+		"You've hit your Max plan limit · resets 6pm",
+		"You've hit your Max limit · resets 6pm",
+		"You've hit your Max 20x limit · resets 6pm",
+		"You've hit your Pro limit · resets 6pm",
+		"You've hit your Team plan limit · resets 6pm",
+		"You've hit your Ultra limit · resets 6pm",
+		"You've hit your Enterprise limit · resets 6pm",
+		"You've hit your Free plan limit · resets 6pm",
+		"You've hit your Weekly limit · resets 6pm",
+	} {
+		if got := transcript.LimitModel(msg); got != "" {
+			t.Errorf("%q: got %q, want an account-wide limit", msg, got)
+		}
+	}
+	// Model names that only start like a plan word are still models.
+	for msg, want := range map[string]string{
+		"You've hit your Fable limit · resets 6pm":    "Fable",
+		"You've hit your Maxwell limit · resets 6pm":  "Maxwell",
+		"You've hit your Opus 5.5 limit · resets 6pm": "Opus 5.5",
+	} {
+		if got := transcript.LimitModel(msg); got != want {
+			t.Errorf("%q: got %q, want %q", msg, got, want)
+		}
+	}
+}
