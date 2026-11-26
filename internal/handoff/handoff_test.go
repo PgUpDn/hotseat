@@ -192,3 +192,43 @@ func TestOfferDesktopNoCandidateSuggestsAdd(t *testing.T) {
 		t.Errorf("notified %v", f.notified)
 	}
 }
+
+const fableMessage = "You've hit your Fable limit · resets Nov 1 at 6pm (Asia/Shanghai). Switch to another model, or manage usage credits at https://claude.ai/settings/usage, to continue."
+
+// A limit on one model is named in the dialog: "usage limit" would read as
+// if the whole account were blocked.
+func TestOfferNamesTheLimitedModel(t *testing.T) {
+	p, reg := setup(t)
+	r := req
+	r.Message = fableMessage
+	f := &fakeRunner{press: "Not now"}
+	handoff.Offer(p, reg, r, f)
+	if !strings.Contains(f.dialogText, "claude2 hit its Fable limit in ") || strings.Contains(f.dialogText, "usage limit") {
+		t.Errorf("dialog text:\n%s", f.dialogText)
+	}
+	// A plan-wide limit keeps the old wording.
+	r.Message = "You've hit your weekly limit · resets Nov 1 at 6pm (Asia/Shanghai)"
+	f = &fakeRunner{press: "Not now"}
+	handoff.Offer(p, reg, r, f)
+	if !strings.Contains(f.dialogText, "claude2 hit its usage limit in ") {
+		t.Errorf("plan-wide dialog text:\n%s", f.dialogText)
+	}
+}
+
+func TestOfferNoAlternativeNamesTheLimitedModel(t *testing.T) {
+	p, reg := setup(t)
+	r := req
+	r.To, r.Message = "", fableMessage
+	f := &fakeRunner{}
+	handoff.Offer(p, reg, r, f)
+	if len(f.notified) != 1 || !strings.HasPrefix(f.notified[0], "claude2 hit its Fable limit: ") ||
+		!strings.Contains(f.notified[0], "No other account has Fable quota left") {
+		t.Errorf("notified %v", f.notified)
+	}
+	r.Desktop = true
+	f = &fakeRunner{}
+	handoff.Offer(p, reg, r, f)
+	if len(f.notified) != 1 || !strings.Contains(f.notified[0], "No other account with Claude Desktop data has Fable quota left") {
+		t.Errorf("desktop notified %v", f.notified)
+	}
+}
