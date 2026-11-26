@@ -30,6 +30,10 @@ type usageRow struct {
 	SevenDay    *windowView     `json:"sevenDay"`
 	Limit       *usage.LimitHit `json:"limit"`
 	LimitActive bool            `json:"limitActive"`
+	// ModelLimit is a limit on one model only; it does not make the
+	// account limited.
+	ModelLimit       *usage.LimitHit `json:"modelLimit,omitempty"`
+	ModelLimitActive bool            `json:"modelLimitActive,omitempty"`
 }
 
 func view(w *usage.Window, now time.Time) *windowView {
@@ -101,6 +105,7 @@ func rowsFrom(reg account.Registry, cur string, records map[string]usage.Record,
 			Account: a.Name, Current: a.Name == cur,
 			FiveHour: view(r.FiveHour, now), SevenDay: view(r.SevenDay, now),
 			Limit: r.Limit, LimitActive: r.LimitActive(now),
+			ModelLimit: r.ModelLimit, ModelLimitActive: r.ModelLimit.Active(now),
 		})
 	}
 	return rows
@@ -131,6 +136,13 @@ func cmdUsage(p paths.Paths, args []string, stdout, stderr io.Writer) int {
 				until = fmtWhen(r.Limit.ResetsAt, now)
 			}
 			cols = append(cols, "LIMIT until "+until)
+		}
+		if r.ModelLimitActive {
+			until := "unknown"
+			if r.ModelLimit.ResetsAt > 0 {
+				until = fmtWhen(r.ModelLimit.ResetsAt, now)
+			}
+			cols = append(cols, r.ModelLimit.Model+" limit until "+until)
 		}
 		fmt.Fprintln(tw, strings.Join(cols, "\t"))
 	}

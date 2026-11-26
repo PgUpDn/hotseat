@@ -33,6 +33,16 @@ public enum Format {
         return "Limit until " + when(l.resetsAt, now: now, calendar: calendar)
     }
 
+    /// A limit on one model: "Fable limit · resets in 5h 30m".
+    public static func modelLimit(_ l: LimitHit, now: Date, calendar: Calendar = .current) -> String {
+        let name = (l.model ?? "Model") + " limit"
+        guard l.resetsAt > 0 else { return name + " reached" }
+        if l.resetsAt - Int64(now.timeIntervalSince1970) < 86400 {
+            return name + " · resets " + resets(l.resetsAt, now: now, calendar: calendar)
+        }
+        return name + " until " + when(l.resetsAt, now: now, calendar: calendar)
+    }
+
     public static func when(_ unix: Int64, now: Date, calendar: Calendar = .current) -> String {
         let t = Date(timeIntervalSince1970: TimeInterval(unix))
         let f = DateFormatter()

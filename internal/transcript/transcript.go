@@ -129,6 +129,32 @@ func ContextTokens(path string) int {
 	return 0
 }
 
+// "hit your <name> limit" at the start of a limit message.
+var limitNameRe = regexp.MustCompile(`(?i)^\s*you[’']ve hit your ([^·.\n]{1,40}?) limit\b`)
+
+// planWideLimits are the limit names that are about the whole plan.
+var planWideLimits = map[string]bool{
+	"usage": true, "session": true, "weekly": true, "daily": true, "monthly": true,
+	"5-hour": true, "five-hour": true, "5 hour": true, "rate": true, "plan": true, "spend": true, "spending": true,
+}
+
+// LimitModel names the model a limit message is about ("You've hit your
+// Fable limit · ..." gives "Fable"), or "" for a plan-wide limit and for
+// anything it does not recognise: the name must start with a capital
+// letter, as model names do and "weekly" or "session" do not, so an
+// unknown plan-wide wording is not mistaken for a model.
+func LimitModel(msg string) string {
+	m := limitNameRe.FindStringSubmatch(msg)
+	if m == nil {
+		return ""
+	}
+	name := strings.TrimSpace(m[1])
+	if name == "" || planWideLimits[strings.ToLower(name)] || name[0] < 'A' || name[0] > 'Z' {
+		return ""
+	}
+	return name
+}
+
 var (
 	// "resets <when> [(<zone>)]", ending at " · ", a newline or the end, so
 	// suffixes such as " · progress saved" do not break it. After a zone a

@@ -29,6 +29,9 @@ type LimitHit struct {
 	ObservedAt int64  `json:"observedAt"`
 	SessionID  string `json:"sessionId,omitempty"`
 	Cwd        string `json:"cwd,omitempty"`
+	// Model is set when the limit is on one model only ("Fable"); the
+	// account's other models still work.
+	Model string `json:"model,omitempty"`
 }
 
 type Record struct {
@@ -36,6 +39,9 @@ type Record struct {
 	FiveHour *Window   `json:"fiveHour,omitempty"`
 	SevenDay *Window   `json:"sevenDay,omitempty"`
 	Limit    *LimitHit `json:"limit,omitempty"`
+	// ModelLimit is the last limit hit on a single model. It does not
+	// block the account (see LimitActive).
+	ModelLimit *LimitHit `json:"modelLimit,omitempty"`
 }
 
 // RateWindow and RateLimits mirror the rate_limits object of the statusLine
@@ -165,10 +171,16 @@ func Effective(w *Window, now time.Time) (pct float64, known, reset bool) {
 	return w.UsedPercent, true, false
 }
 
-// SetLimit records that the account hit a usage limit.
+// SetLimit records that the account hit a usage limit: account-wide, or,
+// when l.Model is set, on that model only. One kind does not replace the
+// other.
 func SetLimit(p paths.Paths, name string, l LimitHit) error {
 	return Update(p, name, func(r *Record) bool {
-		r.Limit = &l
+		if l.Model != "" {
+			r.ModelLimit = &l
+		} else {
+			r.Limit = &l
+		}
 		return true
 	})
 }
