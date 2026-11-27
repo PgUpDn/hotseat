@@ -5,6 +5,10 @@ Run: python3 -m unittest discover -s linux -p 'test_*.py'
 """
 import datetime as dt
 import json
+import locale
+import os
+import stat
+import tempfile
 import unittest
 from zoneinfo import ZoneInfo
 
@@ -51,6 +55,25 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(f.fmt_when(ts("2026-10-30 14:30"), NOW, SHANGHAI), "14:30")
         self.assertEqual(f.fmt_when(ts("2026-11-02 19:00"), NOW, SHANGHAI), "Mon 19:00")
         self.assertEqual(f.fmt_when(ts("2026-11-09 10:00"), NOW, SHANGHAI), "Nov 9 10:00")
+
+    def test_when_text_ignores_the_locale(self):
+        # The Mac app pins en_US_POSIX; GTK sets the desktop's locale on
+        # import, so a non-English LC_TIME must not change the names.
+        old = locale.setlocale(locale.LC_TIME)
+        for name in ("zh_CN.UTF-8", "de_DE.UTF-8", "fr_FR.UTF-8", "ja_JP.UTF-8"):
+            try:
+                locale.setlocale(locale.LC_TIME, name)
+                break
+            except locale.Error:
+                continue
+        else:
+            self.skipTest("no non-English locale installed")
+        try:
+            self.assertEqual(f.fmt_when(ts("2026-11-02 19:00"), NOW, SHANGHAI), "Mon 19:00")
+            self.assertEqual(f.fmt_when(ts("2026-11-09 10:00"), NOW, SHANGHAI), "Nov 9 10:00")
+            self.assertEqual(f.fmt_limit({"resetsAt": ts("2026-11-01 18:00")}, NOW, SHANGHAI), "Limit until Sun 18:00")
+        finally:
+            locale.setlocale(locale.LC_TIME, old)
 
     def test_age_text(self):
         self.assertEqual(f.fmt_age(None, NOW), "no data yet")
@@ -117,6 +140,19 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(f.display_name({"account": "claude2", "email": "sam.w@example.com"}), "sam.w")
         self.assertEqual(f.display_name({"account": "claude2"}), "claude2")
         self.assertEqual(f.display_name({"account": "claude2", "note": "  ", "email": ""}), "claude2")
+        # A non-blank note or email is used as typed, as on the Mac.
+        self.assertEqual(f.display_name({"account": "claude2", "note": " Work "}), " Work ")
+
+    def test_stale_window_past_reset(self):
+        # staleWindowPastReset in FormatTests.swift.
+        self.assertEqual(f.fmt_value(window(80, "2026-10-30 09:00"), NOW, SHANGHAI), "0% (reset)")
+        self.assertEqual(f.win_percent(window(80, "2026-10-30 09:00"), NOW), 0)
+        self.assertEqual(f.win_percent(window(80, "2026-10-30 11:00"), NOW), 80)
+        limited = PANEL["accounts"][0]  # limit resets 1793527200
+        self.assertTrue(f.is_limited(limited, 1793527100))
+        self.assertFalse(f.is_limited(limited, 1793527300))
+        later = 1793345500  # after claude3's 5h reset
+        self.assertEqual(f.title_text(PANEL, False, later), "0%")
 
     def test_a_window_past_its_reset_is_not_used_or_limited(self):
         limited = PANEL["accounts"][0]  # limit resets 1793527200
@@ -144,14 +180,32 @@ class NamesAndEntries(unittest.TestCase):
     def test_autostart_entry_quotes_the_path(self):
         plain = f.autostart_entry("/home/u/.local/bin/hotseat-indicator")
         self.assertIn("\nExec=/usr/bin/python3 -I /home/u/.local/bin/hotseat-indicator\n", plain)
-        spaced = f.autostart_entry('/home/u/my apps/hot"seat$1`%')
-        # Desktop Entry spec: quote the argument, backslash " ` $ \, and %% for %.
-        self.assertIn('\nExec=/usr/bin/python3 -I "/home/u/my apps/hot\\"seat\\$1\\`%%"\n', spaced)
+        spaced = f.autostart_entry('/home/u/my apps/a\\b"c$d`e%')
+        # Desktop Entry spec: %% for %; quote the argument and put \ before
+        # " ` $ \; then every backslash is written twice, because the value
+        # is unescaped as a string first: a literal backslash becomes four.
+        self.assertIn('\nExec=/usr/bin/python3 -I "/home/u/my apps/a\\\\\\\\b\\\\"c\\\\$d\\\\`e%%"\n', spaced)
         self.assertTrue(plain.startswith("[Desktop Entry]\nType=Application\n"))
 
     def test_error_text(self):
-        self.assertEqual(f.error_text(1, "boom"), "boom")
+        # HotseatError.message.
+        self.assertEqual(f.error_text(1, "boom"), "hotseat exited with 1: boom")
         self.assertEqual(f.error_text(2, ""), "hotseat exited with 2")
+        self.assertEqual(f.error_text(None, "hotseat did not answer within 30 s"), "hotseat did not answer within 30 s")
+        self.assertEqual(f.bad_output("x" * 300), "hotseat printed something unexpected: " + "x" * 200)
+
+    def test_tilde(self):
+        self.assertEqual(f.tilde("/home/u/.claude-work", "/home/u"), "~/.claude-work")
+        self.assertEqual(f.tilde("/home/u", "/home/u"), "~")
+        self.assertEqual(f.tilde("/home/u2/x", "/home/u"), "/home/u2/x")
+        self.assertEqual(f.tilde("/home/u/x", "/home/u/"), "~/x")
+        self.assertEqual(f.tilde(None, "/home/u"), "—")
+        self.assertEqual(f.tilde("", "/home/u"), "—")
+
+    def test_parse_object(self):
+        self.assertEqual(f.parse_object('{"a": 1}'), {"a": 1})
+        for bad in ("", "nope", "[]", "1", '"s"', "null", None):
+            self.assertIsNone(f.parse_object(bad), repr(bad))
 
     def test_removal_result(self):
         ok = json.dumps({"removed": "work", "loggedOut": True, "backup": "/b"})
@@ -199,9 +253,50 @@ class SetupSteps(unittest.TestCase):
         self.assertTrue(steps["desktop"][2])  # nothing to adopt
         self.assertEqual(steps["desktop"][3], "Claude Desktop is not installed or never opened")
 
+    def test_share_conflicts_do_not_block(self):
+        # shareConflictsDoNotBlock in SetupTests.swift: conflicts with no
+        # share actions left leave the step done, and say so.
+        share = f.setup_steps(dict(self.STATUS, shareConflicts=2, shareActions=0), "0.1.1")[2]
+        self.assertTrue(share[2])
+        self.assertIn("2 files differ", share[3])
+
     def test_missing_fields_default(self):
         self.assertEqual(self.ids_done({}), [("cli", True), ("accounts", False), ("share", False),
                                              ("shim", False), ("tracking", False), ("desktop", True)])
+
+
+class RunCli(unittest.TestCase):
+    def fake_cli(self, body):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "hotseat")
+        with open(path, "w") as fh:
+            fh.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+        self.addCleanup(lambda: (os.remove(path), os.rmdir(d)))
+        return path
+
+    def test_output_that_is_not_utf8_does_not_raise(self):
+        path = self.fake_cli(r"printf '\377\376{}'; printf 'bad \377' >&2; exit 4")
+        status, out, err = f.run_cli(path, ["panel", "--json"], 10)
+        self.assertEqual(status, 4)
+        self.assertIn("\ufffd", out)
+        self.assertEqual(err, "bad \ufffd")
+        self.assertEqual(f.error_text(status, err), "hotseat exited with 4: bad \ufffd")
+
+    def test_exit_code_and_output(self):
+        path = self.fake_cli('echo "$1 $2"; echo oops >&2; exit 3')
+        self.assertEqual(f.run_cli(path, ["use", "work"], 10), (3, "use work\n", "oops"))
+
+    def test_missing_cli_and_timeout(self):
+        status, out, err = f.run_cli("/nonexistent/hotseat", ["version"], 10)
+        self.assertEqual((status, out), (None, ""))
+        self.assertEqual(err, "hotseat CLI not found; tried: /nonexistent/hotseat")
+        slow = self.fake_cli("sleep 5")
+        self.assertEqual(f.run_cli(slow, [], 0.3), (None, "", "hotseat did not answer within 0 s"))
+
+    def test_guarded_always_returns(self):
+        self.assertEqual(f.guarded(lambda: 1, lambda e: 2), 1)
+        self.assertEqual(f.guarded(lambda: 1 / 0, lambda e: ("err", type(e).__name__)), ("err", "ZeroDivisionError"))
 
 
 if __name__ == "__main__":

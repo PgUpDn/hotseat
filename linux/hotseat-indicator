@@ -45,9 +45,9 @@ import cairo  # noqa: E402
 # python3 -I leaves the script's directory off sys.path.
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from hotseat_format import (  # noqa: E402
-    ICON_CHOICES, autostart_entry, avatar_text, display_name, error_text, fmt_age, fmt_limit, fmt_model_limit,
-    fmt_value, is_limited, is_model_limited, observed_at, removal_problem, setup_steps, tilde, valid_name,
-    win_percent, windows)
+    ICON_CHOICES, autostart_entry, avatar_text, bad_output, display_name, error_text, fmt_age, fmt_limit,
+    fmt_model_limit, fmt_value, guarded, is_limited, is_model_limited, observed_at, parse_object, removal_problem,
+    run_cli, setup_steps, tilde, valid_name, win_percent, windows)
 
 HOME = os.path.expanduser("~")
 # HOTSEAT_PATH points the app at another CLI, e.g. macos/demo/hotseat-demo.
@@ -92,22 +92,16 @@ progressbar.hs-high progress { background-color: #e5a50a; }
 # ---------- the hotseat CLI (HotseatKit/CLI.swift) ----------
 
 def run_raw(args, timeout):
-    """Returns (status, stdout, stderr); status -1 when it could not run,
-    -2 on timeout."""
-    try:
-        r = subprocess.run([HOTSEAT] + args, stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                           timeout=timeout)
-        return r.returncode, r.stdout, r.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return -2, "", "hotseat did not answer within %d s" % timeout
-    except OSError as e:
-        return -1, "", "hotseat CLI not found; tried: %s (%s)" % (HOTSEAT, e.strerror)
+    """(status, stdout, stderr) from the hotseat CLI; status None when it did
+    not run to an exit code. Never raises (see hotseat_format.run_cli)."""
+    return run_cli(HOTSEAT, args, timeout)
 
 
 def load_prefs():
     try:
         with open(PREFS) as f:
-            return json.load(f)
+            prefs = json.load(f)
+        return prefs if isinstance(prefs, dict) else {}
     except (OSError, ValueError):
         return {}
 
@@ -198,10 +192,16 @@ class Indicator(Gtk.Application):
     def do_activate(self):
         pass  # a second launch just finds this one running
 
-    def background(self, work, done):
-        """Runs work() off the main thread, then done(result) on it."""
+    def background(self, work, done, on_error=None):
+        """Runs work() off the main thread, then done(result) on it. If work
+        raises, done gets on_error(exception) instead, by default a CLI-style
+        (None, "", message) result: done must always run, or a switch would
+        stay "in progress" until the app restarts."""
+        if on_error is None:
+            on_error = lambda e: (None, "", "Hotseat menu: %s" % e)  # noqa: E731
+
         def run():
-            result = work()
+            result = guarded(work, on_error)
             GLib.idle_add(lambda: done(result) and False)
         threading.Thread(target=run, daemon=True).start()
 
@@ -211,10 +211,11 @@ class Indicator(Gtk.Application):
         def done(result):
             status, out, err = result
             if status == 0:
-                try:
-                    self.snapshot, self.error = json.loads(out), None
-                except ValueError:
-                    self.error = "hotseat printed something unexpected: " + out[:200]
+                snap = parse_object(out)
+                if snap is None:
+                    self.error = bad_output(out)
+                else:
+                    self.snapshot, self.error = snap, None
             else:
                 self.error = error_text(status, err)
             self.render()
@@ -635,10 +636,7 @@ class Indicator(Gtk.Application):
         self.note_drafts = {}
 
     def on_version(self, result):
-        try:
-            self.cli_version = json.loads(result[1]).get("version") if result[0] == 0 else None
-        except ValueError:
-            self.cli_version = None
+        self.cli_version = (parse_object(result[1]) or {}).get("version") if result[0] == 0 else None
         if self.settings:
             self.fill_settings()
 
@@ -898,6 +896,9 @@ class Indicator(Gtk.Application):
                 os.remove(AUTOSTART)
         except OSError as e:
             self.show("Launch at Login: " + (e.strerror or str(e)))
+            # The switch must show what is on disk, not what was asked for.
+            if self.settings:
+                GLib.idle_add(lambda: self.fill_settings() and False)
 
     def set_ask_before_restart(self, ask):
         self.prefs["skipDesktopConfirm"] = not ask
@@ -917,22 +918,17 @@ class Indicator(Gtk.Application):
         def done(result):
             (vs, vout, verr), (ss, sout, _serr) = result
             self.setup_load_error = None
-            try:
-                self.setup_version = json.loads(vout).get("version") if vs == 0 else None
-            except ValueError:
-                self.setup_version = None
+            self.setup_version = (parse_object(vout) or {}).get("version") if vs == 0 else None
             if vs != 0:
                 self.setup_load_error = error_text(vs, verr)
-            try:
-                self.setup_status = json.loads(sout) if ss == 0 else None
-            except ValueError:
-                self.setup_status = None
+            self.setup_status = parse_object(sout) if ss == 0 else None
             self.cli_version = self.setup_version
             if self.setup:
                 self.fill_setup()
             if then:
                 then()
-        self.background(work, done)
+        failed = lambda e: ((None, "", "Hotseat menu: %s" % e),) * 2  # noqa: E731
+        self.background(work, done, failed)
 
     def steps(self):
         return setup_steps(self.setup_status, self.setup_version)
@@ -1042,7 +1038,7 @@ class Indicator(Gtk.Application):
             self.setup_running = None
             self.reload_setup()
             self.refresh()
-        self.background(work, done)
+        self.background(work, done, lambda e: "Hotseat menu: %s" % e)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import datetime as dt
 import json
 import os
 import re
+import subprocess
 
 HOME = os.path.expanduser("~")
 
@@ -39,13 +40,20 @@ def _local(unix, tz):
     return dt.datetime.fromtimestamp(unix, tz) if tz else dt.datetime.fromtimestamp(unix)
 
 
+# Format.swift pins en_US_POSIX; strftime's %a / %b would follow the
+# desktop's locale (GTK sets it on import), so the names are fixed here.
+DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
 def fmt_when(unix, now, tz=None):
     t, n = _local(unix, tz), _local(now, tz)
+    clock = "%02d:%02d" % (t.hour, t.minute)
     if t.date() == n.date():
-        return t.strftime("%H:%M")
+        return clock
     if unix - now < 6 * 86400:
-        return t.strftime("%a %H:%M")
-    return "%s %d %s" % (t.strftime("%b"), t.day, t.strftime("%H:%M"))
+        return "%s %s" % (DAYS[t.weekday()], clock)
+    return "%s %d %s" % (MONTHS[t.month - 1], t.day, clock)
 
 
 def fmt_resets(unix, now, tz=None):
@@ -133,12 +141,14 @@ def observed_at(a):
 
 def display_name(a):
     """The user's note, else the name part of the email, else Hotseat's own
-    name for the account (claude2...)."""
-    note = (a.get("note") or "").strip()
-    if note:
+    name for the account (claude2...). Like Snapshot.swift, a value counts
+    when it is not blank, and is used as typed."""
+    note, email = a.get("note") or "", a.get("email") or ""
+    if note.strip():
         return note
-    email = (a.get("email") or "").strip()
-    return email.split("@")[0] if email else a["account"]
+    if email.strip():
+        return email.split("@")[0]
+    return a["account"]
 
 
 def avatar_text(a):
@@ -167,8 +177,17 @@ def title_text(snap, failed, now):
     return "%.0f%%" % win_percent(a["fiveHour"], now)
 
 
-def tilde(path):
-    return "~" + path[len(HOME):] if path and path.startswith(HOME) else (path or "—")
+def tilde(path, home=None):
+    """path with the home directory written as ~ (only the directory itself,
+    not /home/u2 for /home/u)."""
+    home = (home or HOME).rstrip("/")
+    if not path:
+        return "—"
+    if path == home:
+        return "~"
+    if path.startswith(home + "/"):
+        return "~" + path[len(home):]
+    return path
 
 
 def valid_name(name):
@@ -179,17 +198,60 @@ def valid_name(name):
 # ---------- the hotseat CLI's answers ----------
 
 def error_text(status, stderr):
-    return stderr if stderr else "hotseat exited with %d" % status
+    """HotseatError.message: "hotseat exited with 1: boom". status None means
+    the CLI did not run to an exit code (not found, timed out); stderr then
+    holds the whole message."""
+    if status is None:
+        return stderr
+    return "hotseat exited with %d: %s" % (status, stderr) if stderr else "hotseat exited with %d" % status
+
+
+def run_cli(path, args, timeout):
+    """Runs the hotseat CLI and returns (status, stdout, stderr). It never
+    raises: output that is not UTF-8 is decoded with replacement characters,
+    and a CLI that cannot run gives status None with the message in stderr."""
+    try:
+        r = subprocess.run([path] + list(args), stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+        out = r.stdout.decode("utf-8", "replace")
+        err = r.stderr.decode("utf-8", "replace").strip()
+        return r.returncode, out, err
+    except subprocess.TimeoutExpired:
+        return None, "", "hotseat did not answer within %d s" % timeout
+    except OSError:
+        return None, "", "hotseat CLI not found; tried: %s" % path
+    except Exception as e:  # noqa: BLE001 - whatever happens, the caller gets a result
+        return None, "", "hotseat could not be run: %s" % e
+
+
+def guarded(work, on_error):
+    """work(), or on_error(exception) if it raises: background work must
+    always hand a result back, or the UI waits for it forever."""
+    try:
+        return work()
+    except Exception as e:  # noqa: BLE001
+        return on_error(e)
+
+
+def parse_object(text):
+    """A JSON object from the CLI, or None for anything else (bad JSON, or
+    JSON that is not an object)."""
+    try:
+        value = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def bad_output(text):
+    """HotseatError.badOutput's message."""
+    return "hotseat printed something unexpected: " + (text or "")[:200]
 
 
 def removal_problem(account, stdout):
     """What to tell the user after `hotseat remove <account> --yes --json`
     exited 0: None when all went well, else the Mac app's message."""
-    try:
-        result = json.loads(stdout)
-        removed, logged_out, backup = result["removed"], result["loggedOut"], result["backup"]
-    except (ValueError, KeyError, TypeError):
-        removed = None
+    result = parse_object(stdout) or {}
+    removed, logged_out, backup = result.get("removed"), result.get("loggedOut"), result.get("backup")
     if removed != account or not isinstance(logged_out, bool):
         return "hotseat printed something unexpected: invalid account removal result"
     if not logged_out:
@@ -202,7 +264,11 @@ def setup_steps(status, cli_version):
     """SetupStatus.steps() plus the CLI step, as tuples (id, title, done,
     detail, commands). status is `hotseat setup status --json`, or None when
     the CLI could not answer; commands is None for a step the app cannot
-    run."""
+    run.
+
+    The CLI step only checks that the CLI answers. Unlike SetupStep.cli on
+    the Mac it does not compare versions: there is no bundled CLI here to
+    install or update, so an older CLI is the user's to rebuild."""
     if cli_version:
         cli = ("cli", "Command line tool", True, "hotseat %s is installed" % cli_version, None)
     else:
@@ -238,12 +304,16 @@ def setup_steps(status, cli_version):
 # ---------- launch at login ----------
 
 def _exec_arg(arg):
-    """One argument of a desktop entry's Exec key (Desktop Entry spec): quoted
-    when it has a reserved character, with " ` $ and \\ escaped, and % doubled."""
+    """One argument of a desktop entry's Exec key, by the Desktop Entry spec.
+    % is doubled. An argument with a reserved character is quoted, with
+    " ` $ and \\ escaped by a backslash; and since the value is unescaped
+    as a string first, every backslash of that is written twice (a literal
+    backslash ends up as four, a $ as \\$)."""
     arg = arg.replace("%", "%%")
     if not re.search(r"""[\s"'\\><~|&;$*?#()`]""", arg):
         return arg
-    return '"' + re.sub(r'(["`$\\])', r"\\\1", arg) + '"'
+    quoted = '"' + re.sub(r'(["`$\\])', r"\\\1", arg) + '"'
+    return quoted.replace("\\", "\\\\")
 
 
 def autostart_entry(script):
